@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 from dotenv import load_dotenv
+from aiohttp import web
 
 load_dotenv()
 
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 DATABASE_URL = os.getenv("DATABASE_URL")
+PORT = int(os.getenv("PORT", 10000))
 
 if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN topilmadi!")
@@ -818,6 +820,31 @@ async def admin_panel(message: types.Message):
             reply_markup=admin_menu
         )
 
+# ================= HTTP SERVER (RENDER UCHUN) =================
+async def health_check(request):
+    """Sog'likni tekshirish uchun endpoint"""
+    return web.Response(text="Bot is running!")
+
+async def start_http_server():
+    """HTTP serverni ishga tushirish"""
+    try:
+        app = web.Application()
+        app.router.add_get('/', health_check)
+        app.router.add_get('/health', health_check)
+        
+        runner = web.AppRunner(app)
+        await runner.setup()
+        
+        site = web.TCPSite(runner, '0.0.0.0', PORT)
+        await site.start()
+        logger.info(f"🌐 HTTP server port {PORT} da ishga tushdi")
+        
+        # Serverni ushlab turish
+        while True:
+            await asyncio.sleep(3600)
+    except Exception as e:
+        logger.error(f"❌ HTTP server xatosi: {e}")
+
 # ================= KEEP-ALIVE FUNKSIYASI =================
 async def keep_alive():
     """Botni uyquga ketishdan saqlash"""
@@ -832,7 +859,15 @@ async def keep_alive():
 # ================= MAIN =================
 async def on_startup(dp):
     logger.info("🤖 Bot ishga tushmoqda...")
-    await init_db()
+    
+    try:
+        await init_db()
+    except Exception as e:
+        logger.error(f"❌ Database init xatosi: {e}")
+        # Database xatosi bo'lsa ham bot ishga tushsin
+    
+    # HTTP serverni parallel ishga tushirish
+    asyncio.create_task(start_http_server())
     
     # Keep-alive vazifasini ishga tushirish
     asyncio.create_task(keep_alive())
