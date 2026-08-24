@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 DATABASE_URL = os.getenv("DATABASE_URL")
-PORT = int(os.getenv("PORT", 8080))  # Render.com uchun port
+PORT = int(os.getenv("PORT", 10000))
 
 if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN topilmadi!")
@@ -452,17 +452,14 @@ async def check_balance(message: types.Message):
         logger.error(f"❌ Balans xatosi: {e}")
         await message.answer("❌ Balansni olishda xatolik!")
 
-# ================= WEB SERVER (Render.com uchun) =================
+# ================= WEB SERVER =================
 async def handle_health(request):
-    """Health check endpoint"""
     return web.Response(text="Bot is running!")
 
 async def handle_root(request):
-    """Root endpoint"""
     return web.Response(text="Open Budget Bot - Web Service")
 
 async def start_web_server():
-    """Web serverni ishga tushirish"""
     app = web.Application()
     app.router.add_get('/', handle_root)
     app.router.add_get('/health', handle_health)
@@ -473,7 +470,7 @@ async def start_web_server():
     await site.start()
     logger.info(f"✅ Web server {PORT} portda ishga tushdi")
 
-# ================= MAIN =================
+# ================= MAIN - TO'G'RI ISHGA TUSHIRISH =================
 async def on_startup(dp):
     logger.info("🤖 Bot ishga tushmoqda...")
     logger.info(f"🔑 Bot token: {BOT_TOKEN[:10]}...")
@@ -482,12 +479,10 @@ async def on_startup(dp):
     await init_db()
     logger.info("✅ Bot tayyor!")
 
-async def main():
-    # Web serverni ishga tushirish
-    await start_web_server()
+if __name__ == "__main__":
+    # Web serverni alohida task sifatida ishga tushirish
+    loop = asyncio.get_event_loop()
+    loop.create_task(start_web_server())
     
     # Botni ishga tushirish
-    await executor.start_polling(dp, on_startup=on_startup, skip_updates=True)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    executor.start_polling(dp, on_startup=on_startup, skip_updates=True)
