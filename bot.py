@@ -7,6 +7,8 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 from dotenv import load_dotenv
+from aiohttp import web
+import aiohttp
 
 load_dotenv()
 
@@ -17,6 +19,8 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 DATABASE_URL = os.getenv("DATABASE_URL")
+PORT = int(os.getenv("PORT", 10000))
+SERVICE_URL = os.getenv("SERVICE_URL", "")  # Render.com URL
 
 if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN topilmadi!")
@@ -42,7 +46,6 @@ phone_keyboard = ReplyKeyboardMarkup(
     one_time_keyboard=True
 )
 
-# Foydalanuvchi menyusi - Ovoz berish tugmasi bilan
 user_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton("🗳️ Ovoz berish")],
@@ -52,7 +55,6 @@ user_menu = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# Admin menyusi
 admin_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton("📊 Statistika")],
@@ -149,6 +151,43 @@ async def init_db():
     except Exception as e:
         logger.error(f"❌ Database xatosi: {e}")
 
+# ================= SELF-PING =================
+async def self_ping():
+    """Bot o'zini har 3 daqiqada ping qiladi (uxlamasligi uchun)"""
+    if not SERVICE_URL:
+        logger.warning("⚠️ SERVICE_URL topilmadi! Self-ping o'chirilgan")
+        return
+    
+    await asyncio.sleep(30)  # Bot ishga tushgach 30 soniya kutish
+    
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{SERVICE_URL}/health") as resp:
+                    logger.info(f"🔄 Self-ping: {resp.status} - Bot uyg'oq")
+        except Exception as e:
+            logger.error(f"❌ Self-ping xatosi: {e}")
+        
+        await asyncio.sleep(180)  # Har 3 daqiqada ping
+
+# ================= WEB SERVER =================
+async def handle_health(request):
+    return web.Response(text="Bot is running!")
+
+async def handle_root(request):
+    return web.Response(text="Open Budget Bot - Web Service")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle_root)
+    app.router.add_get('/health', handle_health)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    logger.info(f"✅ Web server {PORT} portda ishga tushdi")
+
 # ================= 1. START =================
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
@@ -212,40 +251,15 @@ async def vote_start(message: types.Message):
         await message.answer("👋 Siz adminsiz, /start bosing")
         return
     
-    # Foydalanuvchi ro'yxatdan o'tganmi?
-    try:
-        conn = await get_db()
-        user = await conn.fetchrow(
-            "SELECT * FROM users WHERE telegram_id = $1",
-            telegram_id
-        )
-        await conn.close()
-        
-        if user:
-            # Ro'yxatdan o'tgan - yangi ovoz berish uchun telefon raqam so'rash
-            user_states[telegram_id] = "waiting_phone"
-            await message.answer(
-                f"🗳️ <b>OVOZ BERISH</b>\n\n"
-                f"💰 1 ta ovoz = 50 000 so'm\n\n"
-                f"📱 Telefon raqamingizni yuboring:\n"
-                f"(Kontakt tugmasi yoki qo'lda yozing)",
-                reply_markup=phone_keyboard,
-                parse_mode="HTML"
-            )
-        else:
-            # Ro'yxatdan o'tmagan
-            user_states[telegram_id] = "waiting_phone"
-            await message.answer(
-                f"🗳️ <b>OVOZ BERISH</b>\n\n"
-                f"💰 1 ta ovoz = 50 000 so'm\n\n"
-                f"📱 Avval telefon raqamingizni yuboring:\n"
-                f"(Kontakt tugmasi yoki qo'lda yozing)",
-                reply_markup=phone_keyboard,
-                parse_mode="HTML"
-            )
-    except Exception as e:
-        logger.error(f"❌ Ovoz berish xatosi: {e}")
-        await message.answer("❌ Xatolik yuz berdi!")
+    user_states[telegram_id] = "waiting_phone"
+    await message.answer(
+        f"🗳️ <b>OVOZ BERISH</b>\n\n"
+        f"💰 1 ta ovoz = 50 000 so'm\n\n"
+        f"📱 Telefon raqamingizni yuboring:\n"
+        f"(Kontakt tugmasi yoki qo'lda yozing)",
+        reply_markup=phone_keyboard,
+        parse_mode="HTML"
+    )
 
 # ================= 3. TELEFON RAQAM (Kontakt orqali) =================
 @dp.message_handler(content_types=['contact'])
@@ -903,10 +917,21 @@ async def on_startup(dp):
     logger.info("🤖 Bot ishga tushmoqda...")
     logger.info(f"🔑 Bot token: {BOT_TOKEN[:10]}...")
     logger.info(f"👤 Admin ID: {ADMIN_ID}")
+    logger.info(f"🌐 Web server port: {PORT}")
+    logger.info(f"🔄 Self-ping: {'YOQILGAN' if SERVICE_URL else 'OCHIRILGAN'}")
     
     await init_db()
+    
+    if SERVICE_URL:
+        asyncio.create_task(self_ping())
+        logger.info("✅ Self-ping ishga tushdi")
     
     logger.info("✅ Bot tayyor!")
 
 if __name__ == "__main__":
+    # Web serverni ishga tushirish
+    loop = asyncio.get_event_loop()
+    loop.create_task(start_web_server())
+    
+    # Botni ishga tushirish
     executor.start_polling(dp, on_startup=on_startup, skip_updates=True)
