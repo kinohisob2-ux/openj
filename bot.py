@@ -92,7 +92,6 @@ def is_valid_phone(phone):
 
 # ================= DATABASE =================
 async def get_db():
-    """Database ulanishi"""
     try:
         conn = await asyncpg.connect(DATABASE_URL)
         return conn
@@ -101,7 +100,6 @@ async def get_db():
         raise
 
 async def init_db():
-    """Database jadvallarini yaratish (BLOKLASH YO'Q)"""
     conn = None
     try:
         conn = await get_db()
@@ -148,8 +146,7 @@ async def init_db():
             )
         """)
         
-        # ⚠️ BLOKLASH USTUNI YO'Q
-        logger.info("✅ Database tayyor (bloklash YO'Q)")
+        logger.info("✅ Database tayyor")
     except Exception as e:
         logger.error(f"❌ Database xatosi: {e}")
         raise
@@ -157,7 +154,7 @@ async def init_db():
         if conn:
             await conn.close()
 
-# ================= 1. START (BLOKLASH YO'Q) =================
+# ================= 1. START =================
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     telegram_id = message.from_user.id
@@ -174,7 +171,6 @@ async def start(message: types.Message):
     try:
         conn = await get_db()
         
-        # HAR QANDAY START BOSGANNI users jadvaliga qo'shish
         await conn.execute(
             "INSERT INTO users (telegram_id, phone) VALUES ($1, $2) "
             "ON CONFLICT (telegram_id) DO NOTHING",
@@ -186,7 +182,6 @@ async def start(message: types.Message):
             telegram_id
         )
         
-        # Agar telefoni bo'lmasa yoki 'no_phone_yet' bo'lsa
         if user['phone'] == "no_phone_yet" or user['phone'] is None:
             user_states[telegram_id] = "waiting_phone"
             await message.answer(
@@ -206,7 +201,6 @@ async def start(message: types.Message):
                 parse_mode="HTML"
             )
         else:
-            # Telefoni bor (to'liq ro'yxatdan o'tgan)
             await message.answer(
                 f"👋 <b>Xush kelibsiz!</b>\n\n"
                 f"📱 <b>Telefon:</b> {user['phone']}\n"
@@ -862,8 +856,7 @@ async def broadcast_send(message: types.Message):
         if conn:
             await conn.close()
 
-# ================= 15. BALANS KOMANDASI =================
-@dp.message_handler(commands=['balance'])
+# ================= 15. BALANS KOMANDASI =================@dp.message_handler(commands=['balance'])
 async def check_balance(message: types.Message):
     if message.from_user.id == ADMIN_ID:
         return
@@ -904,7 +897,7 @@ async def admin_panel(message: types.Message):
             reply_markup=admin_menu
         )
 
-# ================= HTTP SERVER (RENDER UCHUN) =================
+# ================= HTTP SERVER =================
 async def health_check(request):
     return web.Response(text="Bot is running!")
 
@@ -928,74 +921,20 @@ async def start_http_server():
 
 # ================= KEEP-ALIVE =================
 async def keep_alive():
-    consecutive_failures = 0
-    
     while True:
         try:
-            conn = None
-            try:
-                conn = await get_db()
-                await conn.execute("SELECT 1")
-                logger.info("✅ Database ping muvaffaqiyatli")
-                consecutive_failures = 0
-            except Exception as e:
-                logger.error(f"❌ Database ping xatosi: {e}")
-                consecutive_failures += 1
-            finally:
-                if conn:
-                    await conn.close()
-            
-            try:
-                await bot.get_me()
-                logger.info("✅ Telegram API ping muvaffaqiyatli")
-                consecutive_failures = 0
-            except Exception as e:
-                logger.error(f"❌ Telegram API ping xatosi: {e}")
-                consecutive_failures += 1
-            
-            try:
-                import aiohttp
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(f'http://localhost:{PORT}/health', timeout=5) as resp:
-                        if resp.status == 200:
-                            logger.info("✅ HTTP server ping muvaffaqiyatli")
-                            consecutive_failures = 0
-                        else:
-                            logger.warning(f"⚠️ HTTP server javobi: {resp.status}")
-                            consecutive_failures += 1
-            except Exception as e:
-                logger.error(f"❌ HTTP server ping xatosi: {e}")
-                consecutive_failures += 1
-            
-            if consecutive_failures >= 5:
-                logger.error(f"🚨 {consecutive_failures} martadan ko'p xatolik! Bot qayta ishga tushmoqda...")
-                os._exit(1)
-            
+            await bot.get_me()
+            logger.info("📡 Ping yuborildi")
         except Exception as e:
-            logger.error(f"❌ Keep-alive xatosi: {e}")
-            consecutive_failures += 1
-        
-        await asyncio.sleep(30)
+            logger.error(f"❌ Ping xatosi: {e}")
+        await asyncio.sleep(60)
 
 # ================= MAIN =================
 async def on_startup(dp):
     logger.info("🤖 Bot ishga tushmoqda...")
-    
-    for attempt in range(3):
-        try:
-            await init_db()
-            logger.info("✅ Database muvaffaqiyatli ulandi")
-            break
-        except Exception as e:
-            logger.error(f"❌ Database init xatosi (urinish {attempt+1}/3): {e}")
-            if attempt < 2:
-                await asyncio.sleep(5)
-            else:
-                logger.error("❌ Database ulanishi 3 martadan keyin ham muvaffaqiyatsiz!")
-    
+    await init_db()
     asyncio.create_task(start_http_server())
     asyncio.create_task(keep_alive())
-    
     logger.info("✅ Bot tayyor!")
 
 async def on_shutdown(dp):
