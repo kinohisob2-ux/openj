@@ -553,7 +553,7 @@ async def admin_action(callback: types.CallbackQuery):
                         f"✅ <b>TABRIKLAYMIZ!</b> 🎉\n\n"
                         f"💰 Hisobingizga <b>+20 000 so'm</b> qo'shildi!\n\n"
                         f"📊 Joriy balans: <b>{new_balance:,} so'm</b>\n"
-                        f"👥 Referallar: {referal_count}/5",
+                        f"👥 Referallar: {referal_count}/2",
                         reply_markup=user_menu,
                         parse_mode="HTML"
                     )
@@ -652,10 +652,10 @@ async def show_balance(message: types.Message):
         await message.answer(
             f"💳 <b>Hamyon</b>\n\n"
             f"💰 Balans: {user['balance']:,} so'm\n"
-            f"👥 Referallar: {user['referal_count']}/5\n\n"
+            f"👥 Referallar: {user['referal_count']}/2\n\n"
             f"💸 Yechish uchun:\n"
             f"• Balans: 20 000+ so'm\n"
-            f"• Referallar: 5+ ta",
+            f"• Referallar: 2+ ta",
             reply_markup=user_menu,
             parse_mode="HTML"
         )
@@ -697,6 +697,7 @@ async def withdraw_start(message: types.Message):
         balance = user['balance']
         referal_count = user['referal_count']
         
+        # TEKSHIRISHLAR
         if balance < 20000:
             await message.answer(
                 f"❌ Balans: {balance:,} so'm\n"
@@ -707,11 +708,12 @@ async def withdraw_start(message: types.Message):
             )
             return
         
-        if referal_count < 5:
+        # 2 TA REFERAL
+        if referal_count < 2:
             referal_link = await generate_referal_link(telegram_id)
             await message.answer(
-                f"❌ Referallar: {referal_count}/5\n\n"
-                f"👥 Yechish uchun kamida 5 ta referal kerak!\n"
+                f"❌ Referallar: {referal_count}/2\n\n"
+                f"👥 Yechish uchun kamida 2 ta referal kerak!\n"
                 f"🔗 Referal link: {referal_link}\n\n"
                 f"📤 Do'stlaringizni taklif qiling!",
                 reply_markup=user_menu,
@@ -719,11 +721,12 @@ async def withdraw_start(message: types.Message):
             )
             return
         
+        # HAMMA SHARTLAR BAJARILDI - KARTA YOKI TELEFON SO'RASH
         withdraw_states[telegram_id] = "waiting_card_or_phone"
         await message.answer(
             f"✅ <b>Barcha shartlar bajarildi!</b>\n\n"
             f"💰 Balans: {balance:,} so'm\n"
-            f"👥 Referallar: {referal_count}/5\n\n"
+            f"👥 Referallar: {referal_count}/2\n\n"
             f"💳 <b>Karta raqamingizni</b> yoki\n"
             f"📱 <b>Telefon raqamingizni</b> yuboring:\n\n"
             f"(Masalan: 8600 1234 5678 9012 yoki +998901234567)",
@@ -756,18 +759,22 @@ async def withdraw_card_or_phone(message: types.Message):
             withdraw_states.pop(telegram_id, None)
             return
         
+        # Ma'lumotni saqlash
         if data.startswith('+') or data.replace(' ', '').isdigit():
             if len(data.replace(' ', '')) >= 13:
+                # Karta raqami
                 await conn.execute(
                     "UPDATE users SET card_number = $1 WHERE telegram_id = $2",
                     data, telegram_id
                 )
             else:
+                # Telefon raqami
                 await conn.execute(
                     "UPDATE users SET withdraw_phone = $1 WHERE telegram_id = $2",
                     data, telegram_id
                 )
         
+        # Admin xabar yuborish
         user_info = await bot.get_chat(telegram_id)
         username = user_info.username if user_info.username else "mavjud_emas"
         
@@ -792,7 +799,7 @@ async def withdraw_card_or_phone(message: types.Message):
             f"🆔 ID: <code>{telegram_id}</code>\n"
             f"👤 Username: @{username}\n"
             f"💰 Balans: {user['balance']:,} so'm\n"
-            f"👥 Referallar: {user['referal_count']}\n"
+            f"👥 Referallar: {user['referal_count']}/2\n"
             f"📞 Telefon: {phone_from_db}\n"
             f"💳 Karta: {data if len(data.replace(' ', '')) >= 13 else '❌'}\n"
             f"📱 Tel (yechish): {data if len(data.replace(' ', '')) < 13 else '❌'}",
@@ -806,6 +813,7 @@ async def withdraw_card_or_phone(message: types.Message):
             reply_markup=user_menu
         )
         
+        # Withdraw so'rovini database ga saqlash
         await conn.execute(
             "INSERT INTO withdraws (telegram_id, phone, amount, status) "
             "VALUES ($1, $2, $3, 'pending')",
@@ -921,15 +929,15 @@ async def get_referal_link(message: types.Message):
         referal_link = await generate_referal_link(telegram_id)
         referal_count = user['referal_count']
         
-        if referal_count >= 5:
+        if referal_count >= 2:
             status_text = "✅ Yechish mumkin!"
         else:
-            status_text = f"⏳ Yana {5 - referal_count} ta referal kerak"
+            status_text = f"⏳ Yana {2 - referal_count} ta referal kerak"
         
         await message.answer(
             f"🔗 <b>Referal link</b>\n\n"
             f"📎 {referal_link}\n\n"
-            f"👥 Referallar: {referal_count}/5\n"
+            f"👥 Referallar: {referal_count}/2\n"
             f"{status_text}\n\n"
             f"💡 Do'stlaringizni taklif qiling!",
             reply_markup=user_menu,
@@ -1090,7 +1098,7 @@ async def check_balance(message: types.Message):
         
         await message.answer(
             f"💰 Balans: {user['balance']:,} so'm\n"
-            f"👥 Referallar: {user['referal_count']}/5",
+            f"👥 Referallar: {user['referal_count']}/2",
             reply_markup=user_menu
         )
     except Exception as e:
