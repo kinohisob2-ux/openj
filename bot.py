@@ -58,10 +58,10 @@ bot = Bot(
 dp = Dispatcher()
 
 # ================= HOLATLAR =================
-user_states = {}  # {user_id: state}
-user_phones = {}  # {user_id: phone}
-admin_states = {}  # {admin_id: state}
-withdraw_states = {}  # {user_id: state}
+user_states = {}
+user_phones = {}
+admin_states = {}
+withdraw_states = {}
 
 # ================= TUGMALAR =================
 def get_phone_keyboard():
@@ -100,7 +100,6 @@ def get_admin_menu():
 
 # ================= VALIDATSIYA =================
 def normalize_phone(phone):
-    """Telefon raqamni normalizatsiya qilish"""
     phone = re.sub(r'[\s\-\(\)]', '', phone)
     
     if phone.startswith('+998') and len(phone) == 13:
@@ -115,7 +114,6 @@ def normalize_phone(phone):
     return None
 
 def is_valid_phone(phone):
-    """Telefon raqamni tekshirish"""
     normalized = normalize_phone(phone)
     if not normalized:
         return False
@@ -129,16 +127,13 @@ def is_valid_phone(phone):
     return False
 
 def generate_sms_code():
-    """6 xonali SMS kod yaratish"""
     return ''.join(random.choices(string.digits, k=6))
 
 def generate_referral_code():
-    """Unique referral code yaratish"""
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
 # ================= DATABASE =================
 async def get_db():
-    """Database ulanishi"""
     try:
         conn = await asyncpg.connect(DATABASE_URL)
         return conn
@@ -147,12 +142,10 @@ async def get_db():
         raise
 
 async def init_db():
-    """Database jadvallarini yaratish"""
     conn = None
     try:
         conn = await get_db()
         
-        # Users jadvali
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -166,7 +159,6 @@ async def init_db():
             )
         """)
         
-        # Codes jadvali
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS codes (
                 id SERIAL PRIMARY KEY,
@@ -179,7 +171,6 @@ async def init_db():
             )
         """)
         
-        # Verified phones jadvali
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS verified_phones (
                 id SERIAL PRIMARY KEY,
@@ -189,7 +180,6 @@ async def init_db():
             )
         """)
         
-        # Transactions jadvali
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
                 id SERIAL PRIMARY KEY,
@@ -201,7 +191,6 @@ async def init_db():
             )
         """)
         
-        # Withdraws jadvali
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS withdraws (
                 id SERIAL PRIMARY KEY,
@@ -214,7 +203,6 @@ async def init_db():
             )
         """)
         
-        # Referrals jadvali
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS referrals (
                 id SERIAL PRIMARY KEY,
@@ -224,7 +212,6 @@ async def init_db():
             )
         """)
         
-        # Indexlar
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_codes_status ON codes(status)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_codes_telegram_id ON codes(telegram_id)")
@@ -244,7 +231,6 @@ async def init_db():
 
 # ================= DATABASE FUNKSIYALARI =================
 async def get_user(telegram_id):
-    """Foydalanuvchi ma'lumotlarini olish"""
     conn = None
     try:
         conn = await get_db()
@@ -257,7 +243,6 @@ async def get_user(telegram_id):
             await conn.close()
 
 async def get_referral_count(telegram_id):
-    """Referallar sonini olish"""
     conn = None
     try:
         conn = await get_db()
@@ -271,7 +256,6 @@ async def get_referral_count(telegram_id):
             await conn.close()
 
 async def is_phone_verified(phone):
-    """Telefon raqam tasdiqlanganligini tekshirish"""
     conn = None
     try:
         conn = await get_db()
@@ -285,7 +269,6 @@ async def is_phone_verified(phone):
             await conn.close()
 
 async def add_transaction(telegram_id, amount, type='deposit', description=None):
-    """Tranzaksiya qo'shish"""
     conn = None
     try:
         conn = await get_db()
@@ -299,7 +282,6 @@ async def add_transaction(telegram_id, amount, type='deposit', description=None)
 
 # ================= SMS YUBORISH (MOCK) =================
 async def send_sms_code(phone, code):
-    """SMS kod yuborish (mock - real integratsiya qo'shish kerak)"""
     logger.info(f"SMS kod {code} raqamga yuborildi: {phone}")
     
     if TEST_MODE:
@@ -321,12 +303,10 @@ async def start(message: types.Message):
     telegram_id = message.from_user.id
     logger.info(f"👤 /start bosildi: {telegram_id}")
     
-    # Admin uchun
     if telegram_id == ADMIN_ID:
         await message.answer("👋 Xush kelibsiz, Admin!", reply_markup=get_admin_menu())
         return
     
-    # Referral kodni tekshirish
     ref_code = None
     if message.text and ' ' in message.text:
         parts = message.text.split()
@@ -337,7 +317,6 @@ async def start(message: types.Message):
     try:
         conn = await get_db()
         
-        # Foydalanuvchini qo'shish
         await conn.execute(
             "INSERT INTO users (telegram_id, phone) VALUES ($1, 'no_phone_yet') "
             "ON CONFLICT (telegram_id) DO NOTHING",
@@ -357,7 +336,6 @@ async def start(message: types.Message):
             await message.answer("❌ Siz bloklangansiz! Admin bilan bog'laning.")
             return
         
-        # Referral kod yaratish
         if not user['referral_code']:
             ref_code_new = generate_referral_code()
             await conn.execute(
@@ -369,7 +347,6 @@ async def start(message: types.Message):
                 telegram_id
             )
         
-        # Referral qo'shish
         if ref_code:
             referrer = await conn.fetchrow(
                 "SELECT telegram_id FROM users WHERE referral_code = $1",
@@ -449,7 +426,6 @@ async def vote_start(message: types.Message):
         await message.answer("❌ Siz bloklangansiz!")
         return
     
-    # Allaqachon ovoz berganmi?
     if user['phone'] != "no_phone_yet" and await is_phone_verified(user['phone']):
         await message.answer(
             "❌ Siz allaqachon ovoz bergansiz!\n"
@@ -518,7 +494,6 @@ async def receive_phone_text(message: types.Message):
 async def process_phone(message: types.Message, phone: str):
     telegram_id = message.from_user.id
     
-    # Raqam ishlatilganmi?
     if await is_phone_verified(phone):
         await message.answer(
             "❌ Bu telefon raqami allaqachon ishlatilgan!\n"
@@ -541,11 +516,9 @@ async def process_phone(message: types.Message, phone: str):
     user_phones[telegram_id] = phone
     user_states[telegram_id] = "waiting_code"
     
-    # SMS kod yuborish (mock)
     sms_code = generate_sms_code()
     await send_sms_code(phone, sms_code)
     
-    # Test rejimida kodni foydalanuvchiga ham ko'rsatish
     if TEST_MODE:
         await message.answer(
             f"🧪 <b>TEST REJIMI</b>\n"
@@ -560,7 +533,6 @@ async def process_phone(message: types.Message, phone: str):
             f"⏳ Kod {CODE_EXPIRE_MINUTES} daqiqada amal qiladi."
         )
     
-    # Kodni saqlash
     conn = None
     try:
         conn = await get_db()
@@ -569,7 +541,6 @@ async def process_phone(message: types.Message, phone: str):
             phone, sms_code, telegram_id
         )
         
-        # Admin'ga xabar
         await bot.send_message(
             ADMIN_ID,
             f"📱 <b>YANGI TELEFON RAQAM</b>\n\n"
@@ -603,13 +574,11 @@ async def receive_code(message: types.Message):
     try:
         conn = await get_db()
         
-        # Eski kodlarni yopish
         await conn.execute(
             "UPDATE codes SET status = 'expired' WHERE telegram_id = $1 AND status = 'pending'",
             telegram_id
         )
         
-        # Kodni tekshirish
         code_record = await conn.fetchrow(
             "SELECT * FROM codes WHERE phone = $1 AND code = $2 AND status = 'pending' AND expires_at > NOW()",
             phone, code
@@ -622,7 +591,6 @@ async def receive_code(message: types.Message):
             )
             return
         
-        # Kodni tasdiqlashga yuborish
         await conn.execute(
             "UPDATE codes SET status = 'pending_verify' WHERE id = $1",
             code_record['id']
@@ -633,7 +601,6 @@ async def receive_code(message: types.Message):
             reply_markup=get_user_menu()
         )
         
-        # Admin tugmalari
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="✅ To'g'ri kod", callback_data=f"verify_{telegram_id}"),
@@ -683,7 +650,6 @@ async def admin_action(callback: types.CallbackQuery):
                 await callback.answer("❌ Kod topilmadi!", show_alert=True)
                 return
             
-            # Muddati o'tganmi?
             if code_record['expires_at'] < datetime.now():
                 await conn.execute(
                     "UPDATE codes SET status = 'expired' WHERE id = $1",
@@ -694,7 +660,6 @@ async def admin_action(callback: types.CallbackQuery):
             
             phone = code_record['phone']
             
-            # Raqam ishlatilganmi?
             if await is_phone_verified(phone):
                 await conn.execute(
                     "UPDATE codes SET status = 'rejected' WHERE id = $1",
@@ -712,7 +677,6 @@ async def admin_action(callback: types.CallbackQuery):
                     pass
                 return
             
-            # Tasdiqlash
             await conn.execute(
                 "UPDATE codes SET status = 'verified' WHERE id = $1",
                 code_record['id']
@@ -733,7 +697,6 @@ async def admin_action(callback: types.CallbackQuery):
                 telegram_id, VOICE_PRICE
             )
             
-            # Foydalanuvchiga xabar
             try:
                 await bot.send_message(
                     telegram_id,
@@ -915,7 +878,6 @@ async def withdraw_info(message: types.Message):
         await message.answer("✅ Bekor qilindi", reply_markup=get_user_menu())
         return
     
-    # Karta raqami yoki telefon raqamini tekshirish
     if not (re.match(r'^\d{16}$', info.replace(' ', '')) or 
             re.match(r'^\d{19}$', info.replace(' ', '')) or
             is_valid_phone(info)):
@@ -960,7 +922,6 @@ async def withdraw_info(message: types.Message):
             reply_markup=get_user_menu()
         )
         
-        # Admin tugmalari
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="✅ To'landi", callback_data=f"wdone_{telegram_id}"),
@@ -1180,6 +1141,14 @@ async def show_profile(message: types.Message):
     
     status_text = "✅ Tasdiqlangan" if phone_verified else "⏳ Kutilmoqda"
     
+    # Tuzatilgan qator - 'Noma\'lum' ishlatilgan
+    created_date = "Noma'lum"
+    if user.get('created_at'):
+        try:
+            created_date = user['created_at'].strftime('%Y-%m-%d %H:%M')
+        except:
+            created_date = "Noma'lum"
+    
     await message.answer(
         f"👤 <b>PROFIL</b>\n\n"
         f"🆔 ID: <code>{telegram_id}</code>\n"
@@ -1187,7 +1156,7 @@ async def show_profile(message: types.Message):
         f"📊 Holat: {status_text}\n"
         f"💰 Balans: {user['balance']:,} so'm\n"
         f"👥 Referallar: {ref_count} ta\n"
-        f"📅 Ro'yxatdan o'tgan: {user['created_at'].strftime('%Y-%m-%d %H:%M') if user['created_at'] else 'Noma'lum'}",
+        f"📅 Ro'yxatdan o'tgan: {created_date}",
         reply_markup=get_user_menu()
     )
 
@@ -1456,7 +1425,6 @@ async def admin_panel(message: types.Message):
 
 # ================= TOZALASH VAZIFALARI =================
 async def cleanup_expired_codes():
-    """Eskirgan kodlarni tozalash"""
     while True:
         try:
             conn = await get_db()
@@ -1470,7 +1438,6 @@ async def cleanup_expired_codes():
         await asyncio.sleep(60)
 
 async def check_expired_withdraws():
-    """Eskirgan yechish so'rovlarini tekshirish"""
     while True:
         try:
             conn = await get_db()
@@ -1507,11 +1474,9 @@ async def check_expired_withdraws():
 
 # ================= HTTP SERVER (RENDER UCHUN) =================
 async def health_check(request):
-    """Sog'likni tekshirish uchun endpoint"""
     return web.Response(text="Bot is running!")
 
 async def start_http_server():
-    """HTTP serverni ishga tushirish"""
     try:
         app = web.Application()
         app.router.add_get('/', health_check)
@@ -1531,7 +1496,6 @@ async def start_http_server():
 
 # ================= KEEP-ALIVE =================
 async def keep_alive():
-    """Botni uyquga ketishdan saqlash"""
     while True:
         try:
             await bot.get_me()
@@ -1550,7 +1514,6 @@ async def main():
         logger.error(f"❌ Database init xatosi: {e}")
         return
     
-    # Background vazifalarni ishga tushirish
     asyncio.create_task(cleanup_expired_codes())
     asyncio.create_task(check_expired_withdraws())
     asyncio.create_task(start_http_server())
