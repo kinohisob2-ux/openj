@@ -112,9 +112,6 @@ async def init_db():
                 telegram_id BIGINT UNIQUE NOT NULL,
                 phone VARCHAR(20) NOT NULL,
                 balance INTEGER DEFAULT 0,
-                referal_count INTEGER DEFAULT 0,
-                card_number VARCHAR(50) DEFAULT NULL,
-                withdraw_phone VARCHAR(20) DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -154,7 +151,61 @@ async def init_db():
             )
         """)
         
-        # Referals jadvali
+        logger.info("✅ Database tayyor")
+    except Exception as e:
+        logger.error(f"❌ Database xatosi: {e}")
+        raise
+    finally:
+        if conn:
+            await conn.close()
+
+# ================= DATABASE MIGRASIYA =================
+async def migrate_db():
+    """Database jadvallarini yangilash"""
+    conn = None
+    try:
+        conn = await get_db()
+        
+        # referal_count ustuni
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='users' AND column_name='referal_count'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN referal_count INTEGER DEFAULT 0;
+                END IF;
+            END $$;
+        """)
+        
+        # card_number ustuni
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='users' AND column_name='card_number'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN card_number VARCHAR(50) DEFAULT NULL;
+                END IF;
+            END $$;
+        """)
+        
+        # withdraw_phone ustuni
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='users' AND column_name='withdraw_phone'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN withdraw_phone VARCHAR(20) DEFAULT NULL;
+                END IF;
+            END $$;
+        """)
+        
+        # referrals jadvali
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS referrals (
                 id SERIAL PRIMARY KEY,
@@ -164,24 +215,22 @@ async def init_db():
             )
         """)
         
-        logger.info("✅ Database tayyor")
+        logger.info("✅ Database migratsiya muvaffaqiyatli")
     except Exception as e:
-        logger.error(f"❌ Database xatosi: {e}")
-        raise
+        logger.error(f"❌ Migratsiya xatosi: {e}")
     finally:
         if conn:
             await conn.close()
 
-# ================= REFERAL LINK GENERATE (ASYNC) =================
+# ================= REFERAL LINK GENERATE =================
 async def generate_referal_link(telegram_id):
-    """Referal link yaratish (async)"""
     try:
         bot_info = await bot.get_me()
         bot_username = bot_info.username
         return f"https://t.me/{bot_username}?start=ref_{telegram_id}"
     except Exception as e:
         logger.error(f"❌ Bot username olishda xatolik: {e}")
-        return f"https://t.me/Open_budget?start=ref_{telegram_id}"  # Fallback
+        return f"https://t.me/Open_budget?start=ref_{telegram_id}"
 
 # ================= 1. START =================
 @dp.message(Command("start"))
@@ -189,7 +238,6 @@ async def start(message: types.Message):
     telegram_id = message.from_user.id
     logger.info(f"👤 /start bosildi: {telegram_id}")
     
-    # Referal kodni tekshirish
     args = message.text.split()
     referal_id = None
     if len(args) > 1 and args[1].startswith("ref_"):
@@ -210,14 +258,12 @@ async def start(message: types.Message):
     try:
         conn = await get_db()
         
-        # Foydalanuvchini qo'shish
         await conn.execute(
             "INSERT INTO users (telegram_id, phone) VALUES ($1, $2) "
             "ON CONFLICT (telegram_id) DO NOTHING",
             telegram_id, "no_phone_yet"
         )
         
-        # Referalni saqlash
         if referal_id and referal_id != telegram_id:
             existing = await conn.fetchval(
                 "SELECT id FROM referrals WHERE referred_id = $1",
@@ -240,9 +286,8 @@ async def start(message: types.Message):
             telegram_id
         )
         
-        # Referal link (async)
         referal_link = await generate_referal_link(telegram_id)
-        referal_count = user['referal_count']
+        referal_count = user['referal_count'] if 'referal_count' in user else 0
         
         if user['phone'] == "no_phone_yet" or user['phone'] is None:
             user_states[telegram_id] = "waiting_phone"
@@ -498,7 +543,7 @@ async def admin_action(callback: types.CallbackQuery):
                 )
                 
                 referal_count = await conn.fetchval(
-                    "SELECT referal_count FROM users WHERE telegram_id = $1",
+                    "SELECT COALESCE(referal_count, 0) FROM users WHERE telegram_id = $1",
                     telegram_id
                 )
                 
@@ -588,7 +633,7 @@ async def show_balance(message: types.Message):
     try:
         conn = await get_db()
         user = await conn.fetchrow(
-            "SELECT balance, phone, referal_count FROM users WHERE telegram_id = $1",
+            "SELECT balance, phone, COALESCE(referal_count, 0) as referal_count FROM users WHERE telegram_id = $1",
             telegram_id
         )
         
@@ -633,7 +678,7 @@ async def withdraw_start(message: types.Message):
     try:
         conn = await get_db()
         user = await conn.fetchrow(
-            "SELECT balance, phone, referal_count FROM users WHERE telegram_id = $1",
+            "SELECT balance, phone, COALESCE(referal_count, 0) as referal_count FROM users WHERE telegram_id = $1",
             telegram_id
         )
         
@@ -652,7 +697,6 @@ async def withdraw_start(message: types.Message):
         balance = user['balance']
         referal_count = user['referal_count']
         
-        # TEKSHIRISHLAR
         if balance < 20000:
             await message.answer(
                 f"❌ Balans: {balance:,} so'm\n"
@@ -675,7 +719,6 @@ async def withdraw_start(message: types.Message):
             )
             return
         
-        # HAMMA SHARTLAR BAJARILDI
         withdraw_states[telegram_id] = "waiting_card_or_phone"
         await message.answer(
             f"✅ <b>Barcha shartlar bajarildi!</b>\n\n"
@@ -704,7 +747,7 @@ async def withdraw_card_or_phone(message: types.Message):
     try:
         conn = await get_db()
         user = await conn.fetchrow(
-            "SELECT balance, referal_count FROM users WHERE telegram_id = $1",
+            "SELECT balance, COALESCE(referal_count, 0) as referal_count FROM users WHERE telegram_id = $1",
             telegram_id
         )
         
@@ -713,23 +756,18 @@ async def withdraw_card_or_phone(message: types.Message):
             withdraw_states.pop(telegram_id, None)
             return
         
-        # Ma'lumotni saqlash
         if data.startswith('+') or data.replace(' ', '').isdigit():
-            # Telefon yoki karta
             if len(data.replace(' ', '')) >= 13:
-                # Karta raqami
                 await conn.execute(
                     "UPDATE users SET card_number = $1 WHERE telegram_id = $2",
                     data, telegram_id
                 )
             else:
-                # Telefon raqami
                 await conn.execute(
                     "UPDATE users SET withdraw_phone = $1 WHERE telegram_id = $2",
                     data, telegram_id
                 )
         
-        # Admin xabar yuborish
         user_info = await bot.get_chat(telegram_id)
         username = user_info.username if user_info.username else "mavjud_emas"
         
@@ -768,7 +806,6 @@ async def withdraw_card_or_phone(message: types.Message):
             reply_markup=user_menu
         )
         
-        # Withdraw so'rovini database ga saqlash
         await conn.execute(
             "INSERT INTO withdraws (telegram_id, phone, amount, status) "
             "VALUES ($1, $2, $3, 'pending')",
@@ -798,7 +835,6 @@ async def admin_withdraw_action(callback: types.CallbackQuery):
         try:
             conn = await get_db()
             
-            # Balansni nolga tushirish
             await conn.execute(
                 "UPDATE users SET balance = 0 WHERE telegram_id = $1",
                 telegram_id
@@ -874,7 +910,7 @@ async def get_referal_link(message: types.Message):
     try:
         conn = await get_db()
         user = await conn.fetchrow(
-            "SELECT referal_count FROM users WHERE telegram_id = $1",
+            "SELECT COALESCE(referal_count, 0) as referal_count FROM users WHERE telegram_id = $1",
             telegram_id
         )
         
@@ -1036,7 +1072,7 @@ async def check_balance(message: types.Message):
     try:
         conn = await get_db()
         user = await conn.fetchrow(
-            "SELECT balance, phone, referal_count FROM users WHERE telegram_id = $1",
+            "SELECT balance, phone, COALESCE(referal_count, 0) as referal_count FROM users WHERE telegram_id = $1",
             message.from_user.id
         )
         
@@ -1111,29 +1147,26 @@ async def main():
     # Database init
     await init_db()
     
+    # Database migratsiya
+    await migrate_db()
+    
     # HTTP server
     asyncio.create_task(start_http_server())
     
     # Keep-alive
     asyncio.create_task(keep_alive())
     
-    # ✅ Webhook ni o'chirish (conflict ni oldini olish)
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("✅ Webhook o'chirildi")
     except Exception as e:
         logger.error(f"❌ Webhook ni o'chirishda xatolik: {e}")
     
-    # ✅ Botni polling orqali ishga tushirish
-    try:
-        await dp.start_polling(
-            bot, 
-            skip_updates=True,
-            allowed_updates=["message", "callback_query"]
-        )
-    except Exception as e:
-        logger.error(f"❌ Polling xatosi: {e}")
-        raise
+    await dp.start_polling(
+        bot, 
+        skip_updates=True,
+        allowed_updates=["message", "callback_query"]
+    )
 
 if __name__ == "__main__":
     try:
