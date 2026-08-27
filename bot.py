@@ -11,10 +11,12 @@ from collections import defaultdict
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from dotenv import load_dotenv
-from aiohttp import web
 from psycopg2.pool import SimpleConnectionPool
+
+# aiohttp import qilish kerak emas, aiogram o'zi ishlatadi
 
 load_dotenv()
 
@@ -26,10 +28,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 DATABASE_URL = os.getenv("DATABASE_URL")
 PORT = int(os.getenv("PORT", 10000))
-VOICE_PRICE = 20000  # 1 ovoz = 20,000 so'm
-MIN_WITHDRAW = 20000  # Minimal yechish = 20,000 so'm
-MIN_REFERRALS = 5  # Minimal referallar = 5 ta
-CODE_EXPIRE_MINUTES = 5  # Kod amal qilish muddati
+VOICE_PRICE = 20000
+MIN_WITHDRAW = 20000
+MIN_REFERRALS = 5
+CODE_EXPIRE_MINUTES = 5
 
 if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN topilmadi!")
@@ -39,7 +41,11 @@ if ADMIN_ID == 0:
     logger.error("❌ ADMIN_ID topilmadi!")
     exit(1)
 
-bot = Bot(token=BOT_TOKEN)
+# Bot yaratish - Python 3.14 uchun
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher()
 
 # ================= DATABASE POOL =================
@@ -48,7 +54,16 @@ db_pool = None
 def init_db_pool():
     global db_pool
     try:
-        db_pool = SimpleConnectionPool(1, 10, DATABASE_URL, sslmode='require')
+        db_pool = SimpleConnectionPool(
+            1, 
+            20, 
+            DATABASE_URL, 
+            sslmode='require',
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5
+        )
         logger.info("✅ Database pool yaratildi")
     except Exception as e:
         logger.error(f"❌ Database pool xatosi: {e}")
@@ -281,7 +296,6 @@ async def start(message: types.Message):
         cursor.execute("SELECT * FROM users WHERE telegram_id = %s", (telegram_id,))
         user = cursor.fetchone()
         
-        # user tuple: (id, telegram_id, phone, balance, referral_code, referred_by, created_at)
         if not user[4]:  # referral_code
             while True:
                 ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
@@ -319,8 +333,7 @@ async def start(message: types.Message):
                 f"👤 <b>Sizning referal link:</b>\n"
                 f"<code>{ref_link}</code>\n\n"
                 f"📱 <b>Telefon raqamingizni yuboring:</b>",
-                reply_markup=get_phone_keyboard(),
-                parse_mode="HTML"
+                reply_markup=get_phone_keyboard()
             )
         else:
             phone_verified = is_phone_verified(phone)
@@ -335,8 +348,7 @@ async def start(message: types.Message):
                 f"💰 <b>Balans:</b> {balance:,} so'm\n"
                 f"👥 <b>Referallar:</b> {ref_count}/{MIN_REFERRALS}\n\n"
                 f"👇 Pastdagi tugmalardan foydalaning:",
-                reply_markup=get_user_menu(),
-                parse_mode="HTML"
+                reply_markup=get_user_menu()
             )
         
         cursor.close()
@@ -384,18 +396,15 @@ async def handle_referral(message: types.Message):
                 )
                 conn.commit()
                 
-                # Referal sonini olish
                 ref_count = get_referral_count(referer[0])
                 
-                # Refererga xabar (bonussiz)
                 try:
                     await bot.send_message(
                         referer[0],
                         f"👤 <b>YANGI REFERAL!</b>\n\n"
                         f"✅ Yana bir do'stingiz botga qo'shildi!\n"
                         f"📊 Jami referallar: {ref_count}/{MIN_REFERRALS}\n"
-                        f"🎯 Yechish uchun {MIN_REFERRALS} ta kerak",
-                        parse_mode="HTML"
+                        f"🎯 Yechish uchun {MIN_REFERRALS} ta kerak"
                     )
                 except:
                     pass
@@ -451,8 +460,7 @@ async def vote_start(message: types.Message):
             f"🗳️ <b>OVOZ BERISH</b>\n\n"
             f"💰 1 ta ovoz = {VOICE_PRICE:,} so'm\n\n"
             f"📱 Telefon raqamingizni yuboring:",
-            reply_markup=get_phone_keyboard(),
-            parse_mode="HTML"
+            reply_markup=get_phone_keyboard()
         )
         
         cursor.close()
@@ -542,15 +550,13 @@ async def process_phone(message: types.Message, phone: str):
             f"⏳ Kod {CODE_EXPIRE_MINUTES} daqiqada amal qiladi."
         )
         
-        # Adminga telefon raqam haqida xabar
         try:
             await bot.send_message(
                 ADMIN_ID,
                 f"📱 <b>YANGI TELEFON RAQAM</b>\n\n"
                 f"🆔 ID: <code>{telegram_id}</code>\n"
                 f"📞 Telefon: <code>{phone}</code>\n"
-                f"⏳ Kod kutilmoqda...",
-                parse_mode="HTML"
+                f"⏳ Kod kutilmoqda..."
             )
         except Exception as e:
             logger.error(f"❌ Admin'ga yuborishda xatolik: {e}")
@@ -603,9 +609,7 @@ async def receive_code(message: types.Message):
             reply_markup=get_user_menu()
         )
         
-        # Adminga to'liq ma'lumot yuborish
         try:
-            # Foydalanuvchi profilini olish
             user_info = await bot.get_chat(telegram_id)
             user_name = user_info.full_name
             user_username = user_info.username or "yo'q"
@@ -626,8 +630,7 @@ async def receive_code(message: types.Message):
                 f"📞 <b>Telefon:</b> <code>{phone}</code>\n"
                 f"🔑 <b>Kod:</b> <code>{code}</code>\n"
                 f"⏳ <b>Muddati:</b> {CODE_EXPIRE_MINUTES} daqiqa",
-                reply_markup=keyboard,
-                parse_mode="HTML"
+                reply_markup=keyboard
             )
         except Exception as e:
             logger.error(f"❌ Admin'ga kod yuborishda xatolik: {e}")
@@ -669,7 +672,6 @@ async def admin_action(callback: types.CallbackQuery):
                 cursor.close()
                 return
             
-            # code_record: (id, phone, code, telegram_id, status, created_at, expires_at)
             cursor.execute(
                 "SELECT expires_at < NOW() FROM codes WHERE id = %s",
                 (code_record[0],)
@@ -707,7 +709,6 @@ async def admin_action(callback: types.CallbackQuery):
                 cursor.close()
                 return
             
-            # Tasdiqlash
             cursor.execute(
                 "UPDATE codes SET status = 'verified' WHERE id = %s",
                 (code_record[0],)
@@ -730,14 +731,12 @@ async def admin_action(callback: types.CallbackQuery):
             
             conn.commit()
             
-            # Foydalanuvchiga xabar
             try:
                 await bot.send_message(
                     telegram_id,
                     f"✅ <b>TABRIKLAYMIZ!</b> 🎉\n\n"
                     f"💰 Hisobingizga <b>+{VOICE_PRICE:,} so'm</b> qo'shildi!",
-                    reply_markup=get_user_menu(),
-                    parse_mode="HTML"
+                    reply_markup=get_user_menu()
                 )
             except Exception as e:
                 logger.error(f"❌ Foydalanuvchiga xabar yuborishda xatolik: {e}")
@@ -746,8 +745,7 @@ async def admin_action(callback: types.CallbackQuery):
                 f"✅ <b>TASDIQLANDI!</b>\n\n"
                 f"👤 ID: {telegram_id}\n"
                 f"📞 Tel: {phone}\n"
-                f"💰 +{VOICE_PRICE:,} so'm",
-                parse_mode="HTML"
+                f"💰 +{VOICE_PRICE:,} so'm"
             )
             await callback.answer("✅ Tasdiqlandi!")
             
@@ -784,8 +782,7 @@ async def admin_action(callback: types.CallbackQuery):
                 logger.error(f"❌ Foydalanuvchiga xabar yuborishda xatolik: {e}")
             
             await callback.message.edit_text(
-                f"❌ <b>RAD ETILDI!</b>\n\n👤 ID: {telegram_id}",
-                parse_mode="HTML"
+                f"❌ <b>RAD ETILDI!</b>\n\n👤 ID: {telegram_id}"
             )
             await callback.answer("❌ Rad etildi!")
             
@@ -842,8 +839,7 @@ async def show_balance(message: types.Message):
             f"💰 Balans: {user[0]:,} so'm\n"
             f"👥 Referallar: {ref_count}/{MIN_REFERRALS}\n\n"
             f"💸 Yechish uchun {MIN_REFERRALS} ta referral kerak.",
-            reply_markup=get_user_menu(),
-            parse_mode="HTML"
+            reply_markup=get_user_menu()
         )
         
         cursor.close()
@@ -916,8 +912,7 @@ async def withdraw_start(message: types.Message):
                 f"🎯 Kerak: {MIN_REFERRALS} ta\n\n"
                 f"🔗 <b>Referal link:</b>\n"
                 f"<code>{ref_link}</code>\n\n"
-                f"📤 Linkni do'stlaringizga yuboring!",
-                parse_mode="HTML"
+                f"📤 Linkni do'stlaringizga yuboring!"
             )
             return
         
@@ -926,8 +921,7 @@ async def withdraw_start(message: types.Message):
             f"✅ <b>Yechish uchun tayyormisiz!</b>\n\n"
             f"💰 Balans: {balance:,} so'm\n"
             f"👥 Referallar: {ref_count} ta\n\n"
-            f"📱 Karta yoki telefon raqamingizni yuboring:",
-            parse_mode="HTML"
+            f"📱 Karta yoki telefon raqamingizni yuboring:"
         )
         
         cursor.close()
@@ -989,7 +983,6 @@ async def withdraw_info(message: types.Message):
             reply_markup=get_user_menu()
         )
         
-        # Adminga to'liq ma'lumot yuborish
         try:
             user_info = await bot.get_chat(telegram_id)
             user_name = user_info.full_name
@@ -1011,8 +1004,7 @@ async def withdraw_info(message: types.Message):
                 f"📱 <b>Karta/Nomer:</b> <code>{info}</code>\n"
                 f"💰 <b>Summa:</b> <code>{balance:,} so'm</code>\n"
                 f"👥 <b>Referallar:</b> {get_referral_count(telegram_id)} ta",
-                reply_markup=keyboard,
-                parse_mode="HTML"
+                reply_markup=keyboard
             )
         except Exception as e:
             logger.error(f"❌ Admin'ga yuborishda xatolik: {e}")
@@ -1069,8 +1061,7 @@ async def admin_withdraw_action(callback: types.CallbackQuery):
             await callback.message.edit_text(
                 f"✅ <b>TO'LANDI!</b>\n\n"
                 f"👤 ID: {telegram_id}\n"
-                f"💰 Summa: {withdraw[3]:,} so'm",
-                parse_mode="HTML"
+                f"💰 Summa: {withdraw[3]:,} so'm"
             )
             await callback.answer("✅ To'landi!")
             
@@ -1125,8 +1116,7 @@ async def admin_withdraw_action(callback: types.CallbackQuery):
             await callback.message.edit_text(
                 f"❌ <b>RAD ETILDI!</b>\n\n"
                 f"👤 ID: {telegram_id}\n"
-                f"💰 Summa: {withdraw[3]:,} so'm",
-                parse_mode="HTML"
+                f"💰 Summa: {withdraw[3]:,} so'm"
             )
             await callback.answer("❌ Rad etildi!")
             
@@ -1196,8 +1186,7 @@ async def admin_stats(message: types.Message):
             f"💸 Yechish:\n"
             f"  • Kutayotgan: {pending_withdraws}\n"
             f"  • Yakunlangan: {completed_withdraws}\n\n"
-            f"👥 Jami referallar: {total_referrals}",
-            parse_mode="HTML"
+            f"👥 Jami referallar: {total_referrals}"
         )
         
         cursor.close()
@@ -1232,7 +1221,7 @@ async def pending_codes(message: types.Message):
                 text += f"⏳ Yaratilgan: {c[5].strftime('%H:%M:%S')}\n"
                 text += f"⏰ Tugaydi: {c[6].strftime('%H:%M:%S')}\n"
                 text += "➖➖➖➖➖➖➖\n"
-            await message.answer(text, parse_mode="HTML")
+            await message.answer(text)
         else:
             await message.answer("📭 Kutayotgan kodlar yo'q")
         
@@ -1267,7 +1256,7 @@ async def pending_withdraws(message: types.Message):
                 text += f"💰 Summa: <code>{w[3]:,} so'm</code>\n"
                 text += f"📅 Vaqt: {w[5].strftime('%Y-%m-%d %H:%M')}\n"
                 text += "➖➖➖➖➖➖➖\n"
-            await message.answer(text, parse_mode="HTML")
+            await message.answer(text)
         else:
             await message.answer("📭 Yechish so'rovlari yo'q")
         
@@ -1299,7 +1288,7 @@ async def verified_phones_list(message: types.Message):
                 text += f"👤 ID: {p[2]}\n"
                 text += f"📅 Vaqt: {p[3].strftime('%Y-%m-%d %H:%M')}\n"
                 text += "➖➖➖➖➖➖➖\n"
-            await message.answer(text, parse_mode="HTML")
+            await message.answer(text)
         else:
             await message.answer("📭 Tasdiqlangan raqamlar yo'q")
         
@@ -1336,7 +1325,7 @@ async def broadcast_send(message: types.Message):
         failed = 0
         for user in users:
             try:
-                await bot.send_message(user[0], f"📨 <b>XABAR</b>\n\n{text}", parse_mode="HTML")
+                await bot.send_message(user[0], f"📨 <b>XABAR</b>\n\n{text}")
                 sent += 1
                 await asyncio.sleep(0.05)
             except Exception as e:
@@ -1433,8 +1422,7 @@ async def show_referrals(message: types.Message):
             f"👤 <b>Referallar soni:</b> {ref_count}\n"
             f"🎯 <b>Yechish uchun kerak:</b> {MIN_REFERRALS} ta\n\n"
             f"📤 Linkni do'stlaringizga yuboring!\n"
-            f"{MIN_REFERRALS} ta do'stingiz start bossa, pul yechib olasiz",
-            parse_mode="HTML"
+            f"{MIN_REFERRALS} ta do'stingiz start bossa, pul yechib olasiz"
         )
         
         cursor.close()
@@ -1443,44 +1431,6 @@ async def show_referrals(message: types.Message):
     finally:
         if conn:
             return_db_connection(conn)
-
-# ================= XATOLIKLARNI QAYTA ISHLASH =================
-@dp.errors()
-async def errors_handler(update, exception):
-    logger.error(f"❌ Xato: {exception}")
-    return True
-
-# ================= HTTP SERVER =================
-async def health_check(request):
-    return web.Response(text="Bot is running!")
-
-async def start_http_server():
-    try:
-        app = web.Application()
-        app.router.add_get('/', health_check)
-        app.router.add_get('/health', health_check)
-        
-        runner = web.AppRunner(app)
-        await runner.setup()
-        
-        site = web.TCPSite(runner, '0.0.0.0', PORT)
-        await site.start()
-        logger.info(f"🌐 HTTP server port {PORT} da ishga tushdi")
-        
-        while True:
-            await asyncio.sleep(3600)
-    except Exception as e:
-        logger.error(f"❌ HTTP server xatosi: {e}")
-
-# ================= KEEP-ALIVE =================
-async def keep_alive():
-    while True:
-        try:
-            await bot.get_me()
-            logger.info("📡 Ping yuborildi")
-        except Exception as e:
-            logger.error(f"❌ Ping xatosi: {e}")
-        await asyncio.sleep(60)
 
 # ================= MAIN =================
 async def main():
@@ -1492,9 +1442,6 @@ async def main():
     except Exception as e:
         logger.error(f"❌ Database init xatosi: {e}")
         return
-    
-    asyncio.create_task(start_http_server())
-    asyncio.create_task(keep_alive())
     
     logger.info("✅ Bot tayyor!")
     
