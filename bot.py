@@ -142,12 +142,29 @@ async def get_db():
         raise
 
 async def init_db():
+    """Barcha jadvallarni qayta yaratish"""
     conn = None
     try:
         conn = await get_db()
         
+        # ===== BARCHA JADVALLARNI O'CHIRISH =====
+        logger.info("🗑️ Eski jadvallar o'chirilmoqda...")
+        
+        await conn.execute("DROP TABLE IF EXISTS users CASCADE")
+        await conn.execute("DROP TABLE IF EXISTS codes CASCADE")
+        await conn.execute("DROP TABLE IF EXISTS verified_phones CASCADE")
+        await conn.execute("DROP TABLE IF EXISTS transactions CASCADE")
+        await conn.execute("DROP TABLE IF EXISTS withdraws CASCADE")
+        await conn.execute("DROP TABLE IF EXISTS referrals CASCADE")
+        
+        logger.info("✅ Eski jadvallar o'chirildi")
+        
+        # ===== YANGI JADVALLAR =====
+        logger.info("📋 Yangi jadvallar yaratilmoqda...")
+        
+        # 1. users
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
+            CREATE TABLE users (
                 id SERIAL PRIMARY KEY,
                 telegram_id BIGINT UNIQUE NOT NULL,
                 phone VARCHAR(20) NOT NULL DEFAULT 'no_phone_yet',
@@ -159,8 +176,9 @@ async def init_db():
             )
         """)
         
+        # 2. codes
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS codes (
+            CREATE TABLE codes (
                 id SERIAL PRIMARY KEY,
                 phone VARCHAR(20) NOT NULL,
                 code VARCHAR(10) NOT NULL,
@@ -171,8 +189,9 @@ async def init_db():
             )
         """)
         
+        # 3. verified_phones
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS verified_phones (
+            CREATE TABLE verified_phones (
                 id SERIAL PRIMARY KEY,
                 phone VARCHAR(20) UNIQUE NOT NULL,
                 telegram_id BIGINT NOT NULL,
@@ -180,8 +199,9 @@ async def init_db():
             )
         """)
         
+        # 4. transactions
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS transactions (
+            CREATE TABLE transactions (
                 id SERIAL PRIMARY KEY,
                 telegram_id BIGINT NOT NULL,
                 amount INTEGER NOT NULL,
@@ -191,8 +211,9 @@ async def init_db():
             )
         """)
         
+        # 5. withdraws
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS withdraws (
+            CREATE TABLE withdraws (
                 id SERIAL PRIMARY KEY,
                 telegram_id BIGINT NOT NULL,
                 phone VARCHAR(100) NOT NULL,
@@ -203,8 +224,9 @@ async def init_db():
             )
         """)
         
+        # 6. referrals (TO'G'RI)
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS referrals (
+            CREATE TABLE referrals (
                 id SERIAL PRIMARY KEY,
                 referrer_id BIGINT NOT NULL,
                 referred_id BIGINT NOT NULL UNIQUE,
@@ -212,16 +234,20 @@ async def init_db():
             )
         """)
         
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_codes_status ON codes(status)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_codes_telegram_id ON codes(telegram_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(telegram_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_withdraws_status ON withdraws(status)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_withdraws_telegram_id ON withdraws(telegram_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_id)")
+        # ===== INDEXLAR =====
+        logger.info("📊 Indexlar yaratilmoqda...")
         
-        logger.info("✅ Database tayyor")
+        await conn.execute("CREATE INDEX idx_users_telegram_id ON users(telegram_id)")
+        await conn.execute("CREATE INDEX idx_codes_status ON codes(status)")
+        await conn.execute("CREATE INDEX idx_codes_telegram_id ON codes(telegram_id)")
+        await conn.execute("CREATE INDEX idx_transactions_user ON transactions(telegram_id)")
+        await conn.execute("CREATE INDEX idx_withdraws_status ON withdraws(status)")
+        await conn.execute("CREATE INDEX idx_withdraws_telegram_id ON withdraws(telegram_id)")
+        await conn.execute("CREATE INDEX idx_referrals_referrer ON referrals(referrer_id)")
+        await conn.execute("CREATE INDEX idx_referrals_referred ON referrals(referred_id)")
+        
+        logger.info("✅ Database muvaffaqiyatli qayta yaratildi!")
+        
     except Exception as e:
         logger.error(f"❌ Database init xatosi: {e}")
         raise
@@ -1141,7 +1167,6 @@ async def show_profile(message: types.Message):
     
     status_text = "✅ Tasdiqlangan" if phone_verified else "⏳ Kutilmoqda"
     
-    # Tuzatilgan qator - 'Noma\'lum' ishlatilgan
     created_date = "Noma'lum"
     if user.get('created_at'):
         try:
