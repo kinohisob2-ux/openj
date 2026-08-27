@@ -1108,21 +1108,32 @@ async def keep_alive():
 async def main():
     logger.info("🤖 Bot ishga tushmoqda...")
     
+    # Database init
     await init_db()
+    
+    # HTTP server
     asyncio.create_task(start_http_server())
+    
+    # Keep-alive
     asyncio.create_task(keep_alive())
     
+    # ✅ Webhook ni o'chirish (conflict ni oldini olish)
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("✅ Webhook o'chirildi")
     except Exception as e:
         logger.error(f"❌ Webhook ni o'chirishda xatolik: {e}")
     
-    await dp.start_polling(
-        bot, 
-        skip_updates=True,
-        allowed_updates=["message", "callback_query"]
-    )
+    # ✅ Botni polling orqali ishga tushirish
+    try:
+        await dp.start_polling(
+            bot, 
+            skip_updates=True,
+            allowed_updates=["message", "callback_query"]
+        )
+    except Exception as e:
+        logger.error(f"❌ Polling xatosi: {e}")
+        raise
 
 if __name__ == "__main__":
     try:
