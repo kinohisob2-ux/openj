@@ -299,7 +299,7 @@ async def start(message: types.Message):
                 f"1️⃣ Telefon raqamingizni yuboring\n"
                 f"2️⃣ SMS kodni kiriting\n"
                 f"3️⃣ Admin tasdiqlaydi\n"
-                f"4️⃣ 20 000 so'm olasiz!\n\n"
+                f"4️⃣ 55 000 so'm olasiz!\n\n"
                 f"🔗 <b>Referal link:</b> {referal_link}\n"
                 f"👥 <b>Referallar soni:</b> {referal_count}\n\n"
                 f"⚡️ <b>Tez va oson!</b>\n"
