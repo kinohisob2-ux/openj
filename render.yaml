@@ -1,15 +1,10 @@
 services:
   - type: web
-    name: ovoz-bot
-    runtime: python
+    name: telegram-bot
+    runtime: docker
     plan: free
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: python bot.py
+    dockerfilePath: ./Dockerfile
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.11
-      - key: PORT
-        value: "10000"
       - key: BOT_TOKEN
         sync: false
       - key: ADMIN_ID
