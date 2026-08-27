@@ -23,8 +23,8 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 DATABASE_URL = os.getenv("DATABASE_URL")
 PORT = int(os.getenv("PORT", 10000))
 VOICE_PRICE = 20000  # 1 ovoz = 20,000 so'm
-MIN_WITHDRAW = 100000  # Minimal yechish summasi
-MIN_REFERRALS = 3  # Yechish uchun minimal referallar
+MIN_WITHDRAW = 20000  # Minimal yechish = 20,000 so'm
+MIN_REFERRALS = 5  # Minimal referallar = 5 ta
 CODE_EXPIRE_MINUTES = 5  # Kod amal qilish muddati
 
 if not BOT_TOKEN:
@@ -74,7 +74,6 @@ admin_menu = ReplyKeyboardMarkup(
 
 # ================= TELEFON RAQAMNI TEKSHIRISH =================
 def normalize_phone(phone):
-    """Telefon raqamni standart formatga o'tkazish"""
     phone = re.sub(r'[\s\-\(\)]', '', phone)
     
     if phone.startswith('+998') and len(phone) == 13:
@@ -89,7 +88,6 @@ def normalize_phone(phone):
     return None
 
 def is_valid_phone(phone):
-    """Telefon raqamni tekshirish"""
     normalized = normalize_phone(phone)
     if not normalized:
         return False
@@ -103,7 +101,6 @@ def is_valid_phone(phone):
 
 # ================= DATABASE =================
 def get_db_connection():
-    """Database ulanishi"""
     try:
         conn = psycopg2.connect(DATABASE_URL, sslmode='require')
         return conn
@@ -112,7 +109,6 @@ def get_db_connection():
         raise
 
 def init_db():
-    """Database jadvallarini yaratish"""
     conn = None
     try:
         conn = get_db_connection()
@@ -194,7 +190,6 @@ def init_db():
             conn.close()
 
 def get_referral_count(telegram_id):
-    """Referallar sonini olish"""
     conn = None
     try:
         conn = get_db_connection()
@@ -214,7 +209,6 @@ def get_referral_count(telegram_id):
             conn.close()
 
 def is_phone_verified(phone):
-    """Telefon raqam allaqachon tasdiqlanganmi"""
     conn = None
     try:
         conn = get_db_connection()
@@ -240,10 +234,7 @@ async def start(message: types.Message):
     logger.info(f"👤 /start bosildi: {telegram_id}")
     
     if telegram_id == ADMIN_ID:
-        await message.answer(
-            "👋 Xush kelibsiz, Admin!",
-            reply_markup=admin_menu
-        )
+        await message.answer("👋 Xush kelibsiz, Admin!", reply_markup=admin_menu)
         return
     
     conn = None
@@ -251,7 +242,6 @@ async def start(message: types.Message):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Foydalanuvchini yaratish yoki olish
         cursor.execute(
             "INSERT INTO users (telegram_id, phone) VALUES (%s, 'no_phone_yet') "
             "ON CONFLICT (telegram_id) DO NOTHING",
@@ -262,9 +252,6 @@ async def start(message: types.Message):
         user = cursor.fetchone()
         
         # user tuple: (id, telegram_id, phone, balance, referral_code, referred_by, created_at)
-        # Index:         0      1           2      3           4              5            6
-        
-        # Referral kod yaratish
         if not user[4]:  # referral_code
             while True:
                 ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
@@ -301,8 +288,6 @@ async def start(message: types.Message):
                 f"4️⃣ {VOICE_PRICE:,} so'm olasiz!\n\n"
                 f"👤 <b>Sizning referal link:</b>\n"
                 f"<code>{ref_link}</code>\n\n"
-                f"⚡️ <b>Tez va oson!</b>\n"
-                f"💎 <b>Kafolatlangan to'lov!</b>\n\n"
                 f"📱 <b>Telefon raqamingizni yuboring:</b>",
                 reply_markup=phone_keyboard,
                 parse_mode="HTML"
@@ -318,7 +303,7 @@ async def start(message: types.Message):
                 f"📱 <b>Telefon:</b> {phone}\n"
                 f"📊 <b>Holat:</b> {status_text}\n"
                 f"💰 <b>Balans:</b> {balance:,} so'm\n"
-                f"👥 <b>Referallar:</b> {ref_count}\n\n"
+                f"👥 <b>Referallar:</b> {ref_count}/{MIN_REFERRALS}\n\n"
                 f"👇 Pastdagi tugmalardan foydalaning:",
                 reply_markup=user_menu,
                 parse_mode="HTML"
@@ -346,10 +331,7 @@ async def show_referrals(message: types.Message):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute(
-            "SELECT referral_code FROM users WHERE telegram_id = %s",
-            (telegram_id,)
-        )
+        cursor.execute("SELECT referral_code FROM users WHERE telegram_id = %s", (telegram_id,))
         user = cursor.fetchone()
         
         if not user:
@@ -366,8 +348,8 @@ async def show_referrals(message: types.Message):
             f"<code>{ref_link}</code>\n\n"
             f"👤 <b>Referallar soni:</b> {ref_count}\n"
             f"🎯 <b>Yechish uchun kerak:</b> {MIN_REFERRALS} ta\n\n"
-            f"💡 <b>{MIN_REFERRALS} ta referral to'plang va pul yeching!</b>\n"
-            f"💰 Har bir referal uchun {VOICE_PRICE // 2:,} so'm bonus!",
+            f"📤 Linkni do'stlaringizga yuboring!\n"
+            f"{MIN_REFERRALS} ta do'stingiz start bossa, pul yechib olasiz",
             parse_mode="HTML"
         )
         
@@ -394,43 +376,34 @@ async def handle_referral(message: types.Message):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Referal kodni tekshirish
-        cursor.execute(
-            "SELECT telegram_id FROM users WHERE referral_code = %s",
-            (ref_code,)
-        )
+        cursor.execute("SELECT telegram_id FROM users WHERE referral_code = %s", (ref_code,))
         referer = cursor.fetchone()
         
         if referer and referer[0] != telegram_id:
-            # Foydalanuvchini yaratish
             cursor.execute(
                 "INSERT INTO users (telegram_id, phone) VALUES (%s, 'no_phone_yet') "
                 "ON CONFLICT (telegram_id) DO NOTHING",
                 (telegram_id,)
             )
             
-            # Referalni qo'shish
             try:
                 cursor.execute(
                     "INSERT INTO referrals (referrer_id, referred_id) VALUES (%s, %s)",
                     (referer[0], telegram_id)
                 )
-                
-                # Refererga bonus berish
-                cursor.execute(
-                    "UPDATE users SET balance = balance + %s WHERE telegram_id = %s",
-                    (VOICE_PRICE // 2, referer[0])
-                )
-                
                 conn.commit()
                 
-                # Refererni xabardor qilish
+                # Referal sonini olish
+                ref_count = get_referral_count(referer[0])
+                
+                # Refererga xabar (bonussiz)
                 try:
                     await bot.send_message(
                         referer[0],
-                        f"🎉 <b>YANGI REFERAL!</b>\n\n"
-                        f"👤 Yangi foydalanuvchi keldi!\n"
-                        f"💰 +{VOICE_PRICE // 2:,} so'm bonus",
+                        f"👤 <b>YANGI REFERAL!</b>\n\n"
+                        f"✅ Yana bir do'stingiz botga qo'shildi!\n"
+                        f"📊 Jami referallar: {ref_count}/{MIN_REFERRALS}\n"
+                        f"🎯 Yechish uchun {MIN_REFERRALS} ta kerak",
                         parse_mode="HTML"
                     )
                 except:
@@ -465,14 +438,10 @@ async def vote_start(message: types.Message):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute(
-            "SELECT phone FROM users WHERE telegram_id = %s",
-            (telegram_id,)
-        )
+        cursor.execute("SELECT phone FROM users WHERE telegram_id = %s", (telegram_id,))
         user = cursor.fetchone()
         
         if user and user[0] != "no_phone_yet":
-            # Telefon allaqachon tasdiqlanganmi?
             if is_phone_verified(user[0]):
                 await message.answer(
                     "❌ Siz allaqachon ovoz bergansiz!\n"
@@ -546,7 +515,6 @@ async def process_phone(message: types.Message, phone: str):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Telefon raqam allaqachon tasdiqlanganmi?
         if is_phone_verified(phone):
             await message.answer(
                 "❌ Bu telefon raqami allaqachon ishlatilgan!\n"
@@ -556,7 +524,6 @@ async def process_phone(message: types.Message, phone: str):
             cursor.close()
             return
         
-        # Foydalanuvchini yangilash
         cursor.execute(
             "UPDATE users SET phone = %s WHERE telegram_id = %s",
             (phone, telegram_id)
@@ -572,7 +539,7 @@ async def process_phone(message: types.Message, phone: str):
             f"⏳ Kod {CODE_EXPIRE_MINUTES} daqiqada amal qiladi."
         )
         
-        # Adminga xabar
+        # Adminga telefon raqam haqida xabar
         try:
             await bot.send_message(
                 ADMIN_ID,
@@ -613,13 +580,11 @@ async def receive_code(message: types.Message):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Eski kodlarni o'chirish
         cursor.execute(
             "UPDATE codes SET status = 'expired' WHERE telegram_id = %s AND status = 'pending'",
             (telegram_id,)
         )
         
-        # Yangi kodni saqlash
         cursor.execute(
             "INSERT INTO codes (phone, code, telegram_id, status) VALUES (%s, %s, %s, 'pending')",
             (phone, code, telegram_id)
@@ -631,8 +596,13 @@ async def receive_code(message: types.Message):
             reply_markup=user_menu
         )
         
-        # Adminga kodni yuborish
+        # Adminga to'liq ma'lumot yuborish
         try:
+            # Foydalanuvchi profilini olish
+            user_info = await bot.get_chat(telegram_id)
+            user_name = user_info.full_name
+            user_username = user_info.username or "yo'q"
+            
             keyboard = InlineKeyboardMarkup(row_width=2)
             keyboard.add(
                 InlineKeyboardButton("✅ To'g'ri kod", callback_data=f"verify_{telegram_id}_{code}"),
@@ -642,10 +612,12 @@ async def receive_code(message: types.Message):
             await bot.send_message(
                 ADMIN_ID,
                 f"🔑 <b>KOD TEKSHIRISH KERAK</b>\n\n"
-                f"🆔 ID: <code>{telegram_id}</code>\n"
-                f"📞 Telefon: <code>{phone}</code>\n"
-                f"🔑 Kod: <code>{code}</code>\n"
-                f"⏳ Muddati: {CODE_EXPIRE_MINUTES} daqiqa",
+                f"👤 <b>Foydalanuvchi:</b> {user_name}\n"
+                f"🔗 <b>Profil:</b> @{user_username}\n"
+                f"🆔 <b>ID:</b> <code>{telegram_id}</code>\n"
+                f"📞 <b>Telefon:</b> <code>{phone}</code>\n"
+                f"🔑 <b>Kod:</b> <code>{code}</code>\n"
+                f"⏳ <b>Muddati:</b> {CODE_EXPIRE_MINUTES} daqiqa",
                 reply_markup=keyboard,
                 parse_mode="HTML"
             )
@@ -678,7 +650,6 @@ async def admin_action(callback: types.CallbackQuery):
             conn = get_db_connection()
             cursor = conn.cursor()
             
-            # Kodni bazadan olish
             cursor.execute(
                 "SELECT * FROM codes WHERE telegram_id = %s AND code = %s AND status = 'pending'",
                 (telegram_id, code)
@@ -691,9 +662,6 @@ async def admin_action(callback: types.CallbackQuery):
                 return
             
             # code_record: (id, phone, code, telegram_id, status, created_at, expires_at)
-            # Index:         0     1      2        3          4          5           6
-            
-            # Kod muddatini tekshirish
             cursor.execute(
                 "SELECT expires_at < NOW() FROM codes WHERE id = %s",
                 (code_record[0],)
@@ -712,7 +680,6 @@ async def admin_action(callback: types.CallbackQuery):
             
             phone = code_record[1]
             
-            # Telefon raqami allaqachon ishlatilganmi?
             if is_phone_verified(phone):
                 cursor.execute(
                     "UPDATE codes SET status = 'rejected' WHERE id = %s",
@@ -769,7 +736,7 @@ async def admin_action(callback: types.CallbackQuery):
             
             await callback.message.edit_text(
                 f"✅ <b>TASDIQLANDI!</b>\n\n"
-                f"🆔 ID: {telegram_id}\n"
+                f"👤 ID: {telegram_id}\n"
                 f"📞 Tel: {phone}\n"
                 f"💰 +{VOICE_PRICE:,} so'm",
                 parse_mode="HTML"
@@ -809,7 +776,7 @@ async def admin_action(callback: types.CallbackQuery):
                 logger.error(f"❌ Foydalanuvchiga xabar yuborishda xatolik: {e}")
             
             await callback.message.edit_text(
-                f"❌ <b>RAD ETILDI!</b>\n\n🆔 ID: {telegram_id}",
+                f"❌ <b>RAD ETILDI!</b>\n\n👤 ID: {telegram_id}",
                 parse_mode="HTML"
             )
             await callback.answer("❌ Rad etildi!")
@@ -836,10 +803,7 @@ async def show_balance(message: types.Message):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute(
-            "SELECT balance, phone FROM users WHERE telegram_id = %s",
-            (telegram_id,)
-        )
+        cursor.execute("SELECT balance, phone FROM users WHERE telegram_id = %s", (telegram_id,))
         user = cursor.fetchone()
         
         if not user:
@@ -865,7 +829,7 @@ async def show_balance(message: types.Message):
             f"📊 Holat: {status}\n"
             f"💰 Balans: {user[0]:,} so'm\n"
             f"👥 Referallar: {ref_count}/{MIN_REFERRALS}\n\n"
-            f"💸 Yechish uchun kamida {MIN_WITHDRAW:,} so'm va {MIN_REFERRALS} ta referral kerak.",
+            f"💸 Yechish uchun {MIN_REFERRALS} ta referral kerak.",
             reply_markup=user_menu,
             parse_mode="HTML"
         )
@@ -891,10 +855,7 @@ async def withdraw_start(message: types.Message):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute(
-            "SELECT balance, phone FROM users WHERE telegram_id = %s",
-            (telegram_id,)
-        )
+        cursor.execute("SELECT balance, phone FROM users WHERE telegram_id = %s", (telegram_id,))
         user = cursor.fetchone()
         
         if not user:
@@ -909,7 +870,6 @@ async def withdraw_start(message: types.Message):
             )
             return
         
-        # Telefon tasdiqlanganmi?
         if not is_phone_verified(user[1]):
             await message.answer(
                 "❌ Telefon raqamingiz hali tasdiqlanmagan!\n"
@@ -935,12 +895,12 @@ async def withdraw_start(message: types.Message):
             bot_info = await bot.get_me()
             ref_link = f"https://t.me/{bot_info.username}?start=ref_{telegram_id}"
             await message.answer(
-                f"❌ <b>Yechish uchun {MIN_REFERRALS} ta referral kerak!</b>\n\n"
-                f"👥 Sizda: {ref_count} ta referral\n"
+                f"❌ <b>Yechish uchun {MIN_REFERRALS} ta do'stingiz botga start bosishi kerak!</b>\n\n"
+                f"👥 Sizda: {ref_count} ta\n"
                 f"🎯 Kerak: {MIN_REFERRALS} ta\n\n"
                 f"🔗 <b>Referal link:</b>\n"
                 f"<code>{ref_link}</code>\n\n"
-                f"📤 Linkni do'stlaringizga yuboring va {VOICE_PRICE // 2:,} so'm bonus oling!",
+                f"📤 Linkni do'stlaringizga yuboring!",
                 parse_mode="HTML"
             )
             return
@@ -950,7 +910,7 @@ async def withdraw_start(message: types.Message):
             f"✅ <b>Yechish uchun tayyormisiz!</b>\n\n"
             f"💰 Balans: {balance:,} so'm\n"
             f"👥 Referallar: {ref_count} ta\n\n"
-            f"📱 Yechish uchun telefon raqam yoki karta raqamingizni yuboring:",
+            f"📱 Karta yoki telefon raqamingizni yuboring:",
             parse_mode="HTML"
         )
         
@@ -976,10 +936,7 @@ async def withdraw_info(message: types.Message):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute(
-            "SELECT balance FROM users WHERE telegram_id = %s",
-            (telegram_id,)
-        )
+        cursor.execute("SELECT balance FROM users WHERE telegram_id = %s", (telegram_id,))
         user = cursor.fetchone()
         
         if not user:
@@ -994,18 +951,15 @@ async def withdraw_info(message: types.Message):
             withdraw_states.pop(telegram_id, None)
             return
         
-        # Yechish so'rovini yaratish
         cursor.execute(
             "INSERT INTO withdraws (telegram_id, phone, amount, status) VALUES (%s, %s, %s, 'pending')",
             (telegram_id, info, balance)
         )
         
-        # Balansni nolga tushirish
         cursor.execute(
             "UPDATE users SET balance = 0 WHERE telegram_id = %s",
             (telegram_id,)
         )
-        
         conn.commit()
         
         await message.answer(
@@ -1015,8 +969,12 @@ async def withdraw_info(message: types.Message):
             reply_markup=user_menu
         )
         
-        # Adminga yuborish
+        # Adminga to'liq ma'lumot yuborish
         try:
+            user_info = await bot.get_chat(telegram_id)
+            user_name = user_info.full_name
+            user_username = user_info.username or "yo'q"
+            
             keyboard = InlineKeyboardMarkup(row_width=2)
             keyboard.add(
                 InlineKeyboardButton("✅ To'landi", callback_data=f"wdone_{telegram_id}_{balance}"),
@@ -1026,10 +984,12 @@ async def withdraw_info(message: types.Message):
             await bot.send_message(
                 ADMIN_ID,
                 f"💸 <b>YECHISH SO'ROVI</b>\n\n"
-                f"🆔 ID: <code>{telegram_id}</code>\n"
-                f"📱 Ma'lumot: <code>{info}</code>\n"
-                f"💰 Summa: <code>{balance:,} so'm</code>\n"
-                f"👥 Referallar: {get_referral_count(telegram_id)} ta",
+                f"👤 <b>Foydalanuvchi:</b> {user_name}\n"
+                f"🔗 <b>Profil:</b> @{user_username}\n"
+                f"🆔 <b>ID:</b> <code>{telegram_id}</code>\n"
+                f"📱 <b>Karta/Nomer:</b> <code>{info}</code>\n"
+                f"💰 <b>Summa:</b> <code>{balance:,} so'm</code>\n"
+                f"👥 <b>Referallar:</b> {get_referral_count(telegram_id)} ta",
                 reply_markup=keyboard,
                 parse_mode="HTML"
             )
@@ -1087,7 +1047,7 @@ async def admin_withdraw_action(callback: types.CallbackQuery):
             
             await callback.message.edit_text(
                 f"✅ <b>TO'LANDI!</b>\n\n"
-                f"🆔 ID: {telegram_id}\n"
+                f"👤 ID: {telegram_id}\n"
                 f"💰 Summa: {withdraw[3]:,} so'm",
                 parse_mode="HTML"
             )
@@ -1125,7 +1085,6 @@ async def admin_withdraw_action(callback: types.CallbackQuery):
                 (withdraw[0],)
             )
             
-            # Pulni qaytarish
             cursor.execute(
                 "UPDATE users SET balance = balance + %s WHERE telegram_id = %s",
                 (withdraw[3], telegram_id)
@@ -1144,7 +1103,7 @@ async def admin_withdraw_action(callback: types.CallbackQuery):
             
             await callback.message.edit_text(
                 f"❌ <b>RAD ETILDI!</b>\n\n"
-                f"🆔 ID: {telegram_id}\n"
+                f"👤 ID: {telegram_id}\n"
                 f"💰 Summa: {withdraw[3]:,} so'm",
                 parse_mode="HTML"
             )
@@ -1199,9 +1158,6 @@ async def admin_stats(message: types.Message):
         cursor.execute("SELECT COUNT(*) FROM referrals")
         total_referrals = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COALESCE(SUM(amount), 0) FROM withdraws WHERE status = 'completed'")
-        total_withdraw_amount = cursor.fetchone()[0]
-        
         await message.answer(
             f"📊 <b>STATISTIKA</b>\n\n"
             f"👥 Jami foydalanuvchilar: {total_users}\n"
@@ -1215,8 +1171,7 @@ async def admin_stats(message: types.Message):
             f"💰 Jami balans: {total_balance:,} so'm\n"
             f"💸 Yechish:\n"
             f"  • Kutayotgan: {pending_withdraws}\n"
-            f"  • Yakunlangan: {completed_withdraws}\n"
-            f"  • Jami summa: {total_withdraw_amount:,} so'm\n\n"
+            f"  • Yakunlangan: {completed_withdraws}\n\n"
             f"👥 Jami referallar: {total_referrals}",
             parse_mode="HTML"
         )
@@ -1244,7 +1199,7 @@ async def pending_codes(message: types.Message):
         if codes:
             text = "📋 <b>KUTAYOTGAN KODLAR:</b>\n\n"
             for c in codes:
-                text += f"🆔 ID: <code>{c[3]}</code>\n"
+                text += f"👤 ID: <code>{c[3]}</code>\n"
                 text += f"📞 Tel: <code>{c[1]}</code>\n"
                 text += f"🔑 Kod: <code>{c[2]}</code>\n"
                 text += f"⏳ Yaratilgan: {c[5].strftime('%H:%M:%S')}\n"
@@ -1277,7 +1232,7 @@ async def pending_withdraws(message: types.Message):
         if withdraws:
             text = "💸 <b>YECHISH SO'ROVLARI:</b>\n\n"
             for w in withdraws:
-                text += f"🆔 ID: <code>{w[1]}</code>\n"
+                text += f"👤 ID: <code>{w[1]}</code>\n"
                 text += f"📱 Ma'lumot: <code>{w[2]}</code>\n"
                 text += f"💰 Summa: <code>{w[3]:,} so'm</code>\n"
                 text += f"📅 Vaqt: {w[5].strftime('%Y-%m-%d %H:%M')}\n"
@@ -1301,16 +1256,14 @@ async def verified_phones(message: types.Message):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute(
-            "SELECT * FROM verified_phones ORDER BY id DESC LIMIT 50"
-        )
+        cursor.execute("SELECT * FROM verified_phones ORDER BY id DESC LIMIT 50")
         phones = cursor.fetchall()
         
         if phones:
             text = "✅ <b>TASDIQLANGAN RAQAMLAR:</b>\n\n"
             for p in phones:
                 text += f"📞 {p[1]}\n"
-                text += f"🆔 ID: {p[2]}\n"
+                text += f"👤 ID: {p[2]}\n"
                 text += f"📅 Vaqt: {p[3].strftime('%Y-%m-%d %H:%M')}\n"
                 text += "➖➖➖➖➖➖➖\n"
             await message.answer(text, parse_mode="HTML")
@@ -1347,11 +1300,7 @@ async def broadcast_send(message: types.Message):
         failed = 0
         for user in users:
             try:
-                await bot.send_message(
-                    user[0],
-                    f"📨 <b>XABAR</b>\n\n{text}",
-                    parse_mode="HTML"
-                )
+                await bot.send_message(user[0], f"📨 <b>XABAR</b>\n\n{text}", parse_mode="HTML")
                 sent += 1
                 await asyncio.sleep(0.05)
             except Exception as e:
@@ -1382,10 +1331,7 @@ async def check_balance(message: types.Message):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute(
-            "SELECT balance, phone FROM users WHERE telegram_id = %s",
-            (message.from_user.id,)
-        )
+        cursor.execute("SELECT balance, phone FROM users WHERE telegram_id = %s", (message.from_user.id,))
         user = cursor.fetchone()
         
         if not user:
@@ -1409,14 +1355,11 @@ async def check_balance(message: types.Message):
         if conn:
             conn.close()
 
-# ================= 17. ADMIN MENU QAYTARISH =================
+# ================= 17. ADMIN MENU =================
 @dp.message_handler(commands=['admin'])
 async def admin_panel(message: types.Message):
     if message.from_user.id == ADMIN_ID:
-        await message.answer(
-            "👋 Admin panel",
-            reply_markup=admin_menu
-        )
+        await message.answer("👋 Admin panel", reply_markup=admin_menu)
 
 # ================= HTTP SERVER =================
 async def health_check(request):
