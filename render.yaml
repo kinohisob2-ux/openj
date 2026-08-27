@@ -3,7 +3,7 @@ services:
     name: telegram-bot
     runtime: docker
     plan: free
-    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
     envVars:
       - key: BOT_TOKEN
         sync: false
@@ -11,3 +11,5 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.0
