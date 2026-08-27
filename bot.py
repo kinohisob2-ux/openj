@@ -172,9 +172,16 @@ async def init_db():
         if conn:
             await conn.close()
 
-# ================= REFERAL LINK GENERATE =================
-def generate_referal_link(telegram_id):
-    return f"https://t.me/{bot.username}?start=ref_{telegram_id}"
+# ================= REFERAL LINK GENERATE (ASYNC) =================
+async def generate_referal_link(telegram_id):
+    """Referal link yaratish (async)"""
+    try:
+        bot_info = await bot.get_me()
+        bot_username = bot_info.username
+        return f"https://t.me/{bot_username}?start=ref_{telegram_id}"
+    except Exception as e:
+        logger.error(f"❌ Bot username olishda xatolik: {e}")
+        return f"https://t.me/Open_budget?start=ref_{telegram_id}"  # Fallback
 
 # ================= 1. START =================
 @dp.message(Command("start"))
@@ -233,7 +240,8 @@ async def start(message: types.Message):
             telegram_id
         )
         
-        referal_link = generate_referal_link(telegram_id)
+        # Referal link (async)
+        referal_link = await generate_referal_link(telegram_id)
         referal_count = user['referal_count']
         
         if user['phone'] == "no_phone_yet" or user['phone'] is None:
@@ -656,7 +664,7 @@ async def withdraw_start(message: types.Message):
             return
         
         if referal_count < 5:
-            referal_link = generate_referal_link(telegram_id)
+            referal_link = await generate_referal_link(telegram_id)
             await message.answer(
                 f"❌ Referallar: {referal_count}/5\n\n"
                 f"👥 Yechish uchun kamida 5 ta referal kerak!\n"
@@ -874,7 +882,7 @@ async def get_referal_link(message: types.Message):
             await message.answer("❌ Ro'yxatdan o'tmagansiz! /start")
             return
         
-        referal_link = generate_referal_link(telegram_id)
+        referal_link = await generate_referal_link(telegram_id)
         referal_count = user['referal_count']
         
         if referal_count >= 5:
